@@ -61,7 +61,22 @@ Hệ thống Parental Control cho phép phụ huynh kiểm soát việc sử d�
   - Backend: `lockScheduled` timestamp system
   - Client: `windows-client/main.py:249-257`
 
-### 3. Google Authentication
+### 3. Push Notifications (v1.1) ⭐ NEW
+- **Location:** `web-app/public/notifications.js`
+- **Features:**
+  - Browser push notifications khi có yêu cầu mở máy
+  - Toggle button để bật/tắt (🔔 On/Off)
+  - Test notification khi enable lần đầu
+  - Click notification → Focus web app
+  - Âm thanh + rung trên mobile
+- **Implementation:**
+  - NotificationManager class với Notification API
+  - Permission request on first use
+  - Duplicate notification prevention
+  - Integration: `app.js:106-113`, `app.js:467-540`
+- **Browser Support:** Chrome, Firefox, Edge, Safari 16.4+
+
+### 4. Google Authentication
 - **Location:** `web-app/public/index.html:168-200`
 - **Security:**
   - Email whitelist stored in Firebase Rules (server-side)
@@ -435,6 +450,19 @@ d:\yuto control\
 
 ## Changelog
 
+### v1.1 (2026-01-11) - Push Notifications
+- 🔔 Browser push notifications for unlock requests
+- 🔘 Toggle button to enable/disable notifications
+- ✅ Visual indicator (On/Off with green color)
+- 🧪 Test notification on first enable
+- 📱 Mobile support (sound + vibration)
+- 👆 Click notification to focus web app
+- 🔄 Auto-notification for new pending requests
+- 🌐 Cross-browser support (Chrome, Firefox, Edge, Safari)
+
+**Commit:** e23986f
+**Files:** notifications.js (NEW), index.html, app.js, styles.css
+
 ### v1.0.0 (2026-01-11) - Initial Release
 - ✅ Basic lock/unlock functionality
 - ✅ No time limit on approve
@@ -446,8 +474,10 @@ d:\yuto control\
 - ✅ Hidden console window
 - ✅ Comprehensive documentation
 
+**Commit:** cec6417
+
 ---
 
 **Last Updated:** 2026-01-11
-**Version:** 1.0.0
-**Status:** Production Ready ✅
+**Version:** 1.1
+**Status:** Production Ready + Notifications ✅
