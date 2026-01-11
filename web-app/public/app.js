@@ -23,6 +23,9 @@ const elements = {
 function init() {
     console.log('Initializing app...');
 
+    // Initialize notifications
+    initializeNotifications();
+
     // Listen to devices
     const devicesRef = window.dbRef.ref(window.db, 'devices');
     window.dbRef.onValue(devicesRef, (snapshot) => {
@@ -99,6 +102,15 @@ function renderPendingRequests() {
     console.log('Displaying request:', requestId, request);
     elements.requestDeviceName.textContent = request.deviceName || 'Unknown Device';
     elements.requestTime.textContent = getTimeAgo(request.timestamp);
+
+    // Send notification for new request
+    if (window.notificationManager && window.notificationManager.isActive) {
+        window.notificationManager.showUnlockRequest(
+            request.deviceName || 'Unknown Device',
+            request.deviceId,
+            requestId
+        );
+    }
 
     // Store current request ID
     elements.approveBtn.dataset.requestId = requestId;
@@ -450,6 +462,81 @@ function showToast(message, type = 'success') {
     setTimeout(() => {
         elements.toast.classList.add('hidden');
     }, 3000);
+}
+
+// Notification Functions
+async function initializeNotifications() {
+    console.log('🔔 Initializing notifications...');
+
+    // Wait for notificationManager to be available
+    if (!window.notificationManager) {
+        console.warn('⚠️ NotificationManager not loaded yet, waiting...');
+        setTimeout(initializeNotifications, 500);
+        return;
+    }
+
+    const notifBtn = document.getElementById('notificationBtn');
+    const notifStatus = document.getElementById('notificationStatus');
+
+    if (!notifBtn) {
+        console.error('❌ Notification button not found');
+        return;
+    }
+
+    // Initialize notification manager
+    const granted = await window.notificationManager.initialize();
+
+    // Update UI
+    updateNotificationButton(granted);
+
+    // Button click handler
+    notifBtn.addEventListener('click', async () => {
+        if (window.notificationManager.permission === 'granted') {
+            // Toggle on/off
+            if (window.notificationManager.isActive) {
+                window.notificationManager.disable();
+                updateNotificationButton(false);
+                showToast('🔕 Đã tắt thông báo', 'info');
+            } else {
+                window.notificationManager.enable();
+                updateNotificationButton(true);
+                showToast('🔔 Đã bật thông báo', 'success');
+
+                // Test notification
+                window.notificationManager.test();
+            }
+        } else {
+            // Request permission again
+            const granted = await window.notificationManager.initialize();
+            updateNotificationButton(granted);
+
+            if (granted) {
+                showToast('🔔 Đã bật thông báo', 'success');
+                window.notificationManager.test();
+            } else {
+                showToast('❌ Trình duyệt chặn thông báo. Hãy cho phép trong Settings.', 'error');
+            }
+        }
+    });
+
+    console.log('✅ Notifications initialized');
+}
+
+function updateNotificationButton(isActive) {
+    const notifBtn = document.getElementById('notificationBtn');
+    const notifStatus = document.getElementById('notificationStatus');
+
+    if (!notifBtn || !notifStatus) return;
+
+    if (isActive) {
+        notifBtn.classList.add('active');
+        notifStatus.textContent = 'On';
+        notifBtn.title = 'Thông báo đang BẬT';
+    } else {
+        notifBtn.classList.remove('active');
+        notifStatus.textContent = 'Off';
+        notifBtn.title = 'Thông báo đang TẮT';
+    }
 }
 
 // Initialize when DOM is ready

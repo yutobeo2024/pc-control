@@ -13,9 +13,15 @@
         <!-- Header -->
         <header class="header">
             <h1>🔒 Parental Control</h1>
-            <div class="status-indicator" id="connectionStatus">
-                <span class="dot"></span>
-                <span class="text">Connecting...</span>
+            <div class="header-actions">
+                <button class="btn-notification" id="notificationBtn" title="Bật/Tắt thông báo">
+                    <span class="notification-icon">🔔</span>
+                    <span class="notification-status" id="notificationStatus">Off</span>
+                </button>
+                <div class="status-indicator" id="connectionStatus">
+                    <span class="dot"></span>
+                    <span class="text">Connecting...</span>
+                </div>
             </div>
         </header>
 
@@ -178,7 +184,13 @@
                     loginScreen.style.display = 'none';
                     appScreen.style.display = 'block';
 
-                    // Load main app
+                    // Load notifications first, then main app
+                    if (!document.querySelector('script[src="notifications.js"]')) {
+                        const notifScript = document.createElement('script');
+                        notifScript.src = 'notifications.js';
+                        document.body.appendChild(notifScript);
+                    }
+
                     if (!document.querySelector('script[src="app.js"]')) {
                         const script = document.createElement('script');
                         script.src = 'app.js';

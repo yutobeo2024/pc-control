@@ -36,6 +36,50 @@ body {
     margin-bottom: 8px;
 }
 
+.header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.btn-notification {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 20px;
+    padding: 6px 12px;
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-notification:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.05);
+}
+
+.btn-notification.active {
+    background: rgba(76, 175, 80, 0.3);
+    border-color: rgba(76, 175, 80, 0.5);
+}
+
+.btn-notification.active:hover {
+    background: rgba(76, 175, 80, 0.4);
+}
+
+.notification-icon {
+    font-size: 14px;
+}
+
+.notification-status {
+    font-weight: 600;
+    font-size: 11px;
+}
+
 .status-indicator {
     display: flex;
     align-items: center;
