@@ -1,0 +1,7 @@
+PyQt5==5.15.9
+pyrebase4==4.7.1
+python-jwt==4.0.0
+gcloud==0.18.3
+requests>=2.19.1,<2.30
+pycryptodome==3.19.0
+psutil==5.9.6

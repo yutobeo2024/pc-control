@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Windows Client
+windows-client/device_id.txt
+windows-client/config.py
+
+# Flutter/Dart
+mobile-app/.dart_tool/
+mobile-app/.flutter-plugins
+mobile-app/.flutter-plugins-dependencies
+mobile-app/.packages
+mobile-app/build/
+mobile-app/ios/Pods/
+mobile-app/ios/.symlinks/
+mobile-app/ios/Flutter/Flutter.framework
+mobile-app/ios/Flutter/Flutter.podspec
+
+# Firebase config files (IMPORTANT: DO NOT COMMIT)
+mobile-app/android/app/google-services.json
+mobile-app/ios/Runner/GoogleService-Info.plist
+firebase-config.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

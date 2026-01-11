@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "devices": {
+      "$device_id": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "requests": {
+      "$request_id": {
+        ".read": true,
+        ".write": true
+      }
+    }
+  }
+}

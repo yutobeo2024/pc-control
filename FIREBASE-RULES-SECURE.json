@@ -1,0 +1,20 @@
+{
+  "rules": {
+    "devices": {
+      ".read": "auth == null || (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')",
+      ".write": "auth == null || (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')",
+      "$deviceId": {
+        ".read": "auth == null || (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')",
+        ".write": "auth == null || (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')"
+      }
+    },
+    "requests": {
+      ".read": "auth == null || (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')",
+      ".write": "auth == null || (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')",
+      "$requestId": {
+        ".read": "auth == null || (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')",
+        ".write": "auth == null || (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')"
+      }
+    }
+  }
+}

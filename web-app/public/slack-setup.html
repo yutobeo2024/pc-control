@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slack Setup - Parental Control</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .setup-container {
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+
+        .setup-card {
+            background: #2d2d2d;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .setup-card h2 {
+            margin-bottom: 16px;
+            color: #667eea;
+        }
+
+        .setup-card p {
+            color: #9ca3af;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+
+        .setup-card ol {
+            color: #9ca3af;
+            line-height: 1.8;
+            padding-left: 20px;
+        }
+
+        .setup-card code {
+            background: #1a1a1a;
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: #10b981;
+            font-size: 14px;
+        }
+
+        .input-group {
+            margin: 20px 0;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #9ca3af;
+            font-size: 14px;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 2px solid #374151;
+            background: #1a1a1a;
+            color: white;
+            font-size: 14px;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .success-message {
+            background: rgba(16, 185, 129, 0.1);
+            border: 2px solid #10b981;
+            color: #10b981;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 12px;
+            display: none;
+        }
+
+        .back-link {
+            display: inline-block;
+            color: #667eea;
+            text-decoration: none;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <div class="header">
+            <h1>⚙️ Slack Setup</h1>
+        </div>
+
+        <div class="setup-container">
+            <a href="index.html" class="back-link">← Quay lại trang chính</a>
+
+            <div class="setup-card">
+                <h2>🔔 Nhận thông báo qua Slack</h2>
+                <p>Khi có yêu cầu mở máy, bạn sẽ nhận thông báo trên Slack với link để duyệt ngay.</p>
+            </div>
+
+            <div class="setup-card">
+                <h2>📝 Hướng dẫn setup Slack Webhook</h2>
+                <ol>
+                    <li>Truy cập <a href="https://api.slack.com/messaging/webhooks" target="_blank" style="color: #667eea">Slack Incoming Webhooks</a></li>
+                    <li>Click <strong>"Create your Slack app"</strong></li>
+                    <li>Chọn <strong>"From scratch"</strong></li>
+                    <li>Đặt tên app: <code>Parental Control</code></li>
+                    <li>Chọn workspace của bạn</li>
+                    <li>Vào <strong>"Incoming Webhooks"</strong> → Bật ON</li>
+                    <li>Click <strong>"Add New Webhook to Workspace"</strong></li>
+                    <li>Chọn channel để nhận thông báo (VD: #general)</li>
+                    <li>Copy <strong>Webhook URL</strong> (dạng: https://hooks.slack.com/services/...)</li>
+                    <li>Paste vào form bên dưới và Save</li>
+                </ol>
+            </div>
+
+            <div class="setup-card">
+                <h2>🔗 Cấu hình Webhook</h2>
+                <div class="input-group">
+                    <label for="webhookUrl">Slack Webhook URL</label>
+                    <input
+                        type="url"
+                        id="webhookUrl"
+                        placeholder="https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX"
+                    >
+                </div>
+
+                <button class="btn btn-large btn-approve" id="saveBtn">
+                    <span class="btn-icon">💾</span>
+                    <span class="btn-text">Lưu cấu hình</span>
+                </button>
+
+                <div class="success-message" id="successMessage">
+                    ✅ Đã lưu! Bạn sẽ nhận thông báo khi có yêu cầu mới.
+                </div>
+            </div>
+
+            <div class="setup-card">
+                <h2>🧪 Test Webhook</h2>
+                <p>Sau khi lưu, bạn có thể test xem webhook có hoạt động không:</p>
+                <button class="btn btn-large btn-lock" id="testBtn" disabled>
+                    <span class="btn-icon">🚀</span>
+                    <span class="btn-text">Gửi test notification</span>
+                </button>
+            </div>
+
+            <div class="setup-card">
+                <h2>💡 Cách hoạt động</h2>
+                <p>Khi con yêu cầu mở máy:</p>
+                <ol>
+                    <li>Bạn nhận message trên Slack</li>
+                    <li>Click vào link trong message</li>
+                    <li>Web app mở ra với thông tin request</li>
+                    <li>Bấm "Cho phép" hoặc "Từ chối"</li>
+                    <li>Máy tính con sẽ nhận phản hồi ngay lập tức</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const webhookInput = document.getElementById('webhookUrl');
+        const saveBtn = document.getElementById('saveBtn');
+        const testBtn = document.getElementById('testBtn');
+        const successMessage = document.getElementById('successMessage');
+
+        // Load saved webhook
+        const savedWebhook = localStorage.getItem('slackWebhook');
+        if (savedWebhook) {
+            webhookInput.value = savedWebhook;
+            testBtn.disabled = false;
+        }
+
+        // Save webhook
+        saveBtn.addEventListener('click', () => {
+            const url = webhookInput.value.trim();
+
+            if (!url) {
+                alert('Vui lòng nhập Webhook URL');
+                return;
+            }
+
+            if (!url.startsWith('https://hooks.slack.com/')) {
+                alert('URL không hợp lệ. Phải bắt đầu bằng https://hooks.slack.com/');
+                return;
+            }
+
+            localStorage.setItem('slackWebhook', url);
+            successMessage.style.display = 'block';
+            testBtn.disabled = false;
+
+            setTimeout(() => {
+                successMessage.style.display = 'none';
+            }, 3000);
+        });
+
+        // Test webhook
+        testBtn.addEventListener('click', async () => {
+            const url = localStorage.getItem('slackWebhook');
+            if (!url) return;
+
+            testBtn.disabled = true;
+            testBtn.innerHTML = '<span class="btn-text">Đang gửi...</span>';
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: '🧪 *Test Notification* - Parental Control',
+                        blocks: [
+                            {
+                                type: 'section',
+                                text: {
+                                    type: 'mrkdwn',
+                                    text: '✅ Webhook hoạt động tốt!\n\nBạn sẽ nhận thông báo như thế này khi có yêu cầu mở máy.'
+                                }
+                            },
+                            {
+                                type: 'actions',
+                                elements: [
+                                    {
+                                        type: 'button',
+                                        text: {
+                                            type: 'plain_text',
+                                            text: '🔗 Mở Web App'
+                                        },
+                                        url: window.location.origin + '/index.html'
+                                    }
+                                ]
+                            }
+                        ]
+                    })
+                });
+
+                if (response.ok) {
+                    alert('✅ Test thành công! Kiểm tra Slack channel của bạn.');
+                } else {
+                    alert('❌ Lỗi: ' + response.statusText);
+                }
+            } catch (error) {
+                alert('❌ Lỗi: ' + error.message);
+            } finally {
+                testBtn.disabled = false;
+                testBtn.innerHTML = '<span class="btn-icon">🚀</span><span class="btn-text">Gửi test notification</span>';
+            }
+        });
+    </script>
+</body>
+</html>
