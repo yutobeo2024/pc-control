@@ -15,8 +15,14 @@ const elements = {
     devicesList: document.getElementById('devicesList'),
     deviceModal: document.getElementById('deviceModal'),
     closeModal: document.getElementById('closeModal'),
-    toast: document.getElementById('toast'),
-    toastMessage: document.getElementById('toastMessage')
+    toastMessage: document.getElementById('toastMessage'),
+    renameBtn: document.getElementById('renameBtn'),
+    bulkLockTime: document.getElementById('bulkLockTime'),
+    bulkLockRepeat: document.getElementById('bulkLockRepeat'),
+    saveBulkBtn: document.getElementById('saveBulkSchedule'),
+    clearBulkBtn: document.getElementById('clearBulkSchedule'),
+    activeSchedule: document.getElementById('activeBulkSchedule'),
+    scheduleText: document.getElementById('scheduleText')
 };
 
 // Initialize App
@@ -61,10 +67,20 @@ function init() {
         renderPendingRequests();
     });
 
+    // Listen to bulk schedule
+    const bulkRef = window.dbRef.ref(window.db, 'settings/bulkSchedule');
+    window.dbRef.onValue(bulkRef, (snapshot) => {
+        const data = snapshot.val();
+        renderBulkSchedule(data);
+    });
+
     // Event Listeners
     elements.approveBtn.addEventListener('click', handleApprove);
     elements.rejectBtn.addEventListener('click', handleReject);
     elements.closeModal.addEventListener('click', closeModal);
+    elements.renameBtn.addEventListener('click', handleRename);
+    elements.saveBulkBtn.addEventListener('click', handleSaveBulkSchedule);
+    elements.clearBulkBtn.addEventListener('click', handleClearBulkSchedule);
 
     // Close modal on backdrop click
     elements.deviceModal.addEventListener('click', (e) => {
@@ -148,10 +164,11 @@ function renderDevices() {
                         ${icon}
                     </div>
                     <div class="device-info">
-                        <div class="device-name-text">${device.deviceName || 'Unknown Device'}</div>
+                        <div class="device-name-text">${device.deviceName || device.hostname || 'Unknown Device'}</div>
                         <div class="device-status ${isUnlocked ? 'unlocked' : 'locked'}">
                             ${statusText}
                         </div>
+                        <div class="device-meta">${device.hostname || ''} | ${device.os || ''}</div>
                         ${timeText ? `<div class="device-time">Còn ${timeText}</div>` : ''}
                     </div>
                     <div class="device-arrow">›</div>
@@ -177,7 +194,7 @@ function openDeviceModal(deviceId) {
     const isUnlocked = device.status === 'unlocked';
 
     // Update modal content
-    document.getElementById('modalDeviceName').textContent = device.deviceName || 'Unknown Device';
+    document.getElementById('modalDeviceName').textContent = device.deviceName || device.hostname || 'Unknown Device';
     document.getElementById('modalStatusIcon').textContent = isUnlocked ? '✅' : '🔒';
     document.getElementById('modalStatusText').textContent = isUnlocked ? 'Đang hoạt động' : 'Đã khóa';
     document.getElementById('modalStatusText').className = `status-text ${isUnlocked ? 'unlocked' : 'locked'}`;
@@ -377,6 +394,32 @@ async function addTime(deviceId, seconds) {
     }
 }
 
+// Handle Rename
+async function handleRename() {
+    if (!selectedDevice) return;
+
+    const currentName = selectedDevice.deviceName || selectedDevice.hostname || '';
+    const newName = prompt('Nhập tên nhân viên cho thiết bị này:', currentName);
+
+    if (newName === null || newName === currentName) return;
+
+    try {
+        await window.dbRef.update(window.dbRef.ref(window.db, `devices/${selectedDevice.id}`), {
+            deviceName: newName
+        });
+
+        // Update local modal text immediately
+        document.getElementById('modalDeviceName').textContent = newName;
+        // Update selected device
+        selectedDevice.deviceName = newName;
+
+        showToast('✅ Đã đổi tên nhân viên thành công', 'success');
+    } catch (error) {
+        console.error('Error renaming device:', error);
+        showToast('❌ Lỗi: ' + error.message, 'error');
+    }
+}
+
 // Set Time Limit
 async function setTimeLimit(deviceId, seconds) {
     try {
@@ -389,6 +432,61 @@ async function setTimeLimit(deviceId, seconds) {
     } catch (error) {
         console.error('Error setting time limit:', error);
         showToast('❌ Lỗi: ' + error.message, 'error');
+    }
+}
+
+// Bulk Schedule Functions
+async function handleSaveBulkSchedule() {
+    const time = elements.bulkLockTime.value;
+    const repeat = elements.bulkLockRepeat.value;
+
+    if (!time) {
+        showToast('⚠️ Vui lòng chọn giờ khóa máy', 'info');
+        return;
+    }
+
+    try {
+        const scheduleData = {
+            time: time,
+            repeat: repeat,
+            active: true,
+            updatedAt: Date.now()
+        };
+
+        if (repeat === 'once') {
+            const now = new Date();
+            scheduleData.date = now.toISOString().split('T')[0]; // "YYYY-MM-DD"
+        }
+
+        await window.dbRef.set(window.dbRef.ref(window.db, 'settings/bulkSchedule'), scheduleData);
+        showToast('✅ Đã thiết lập giờ khóa hàng loạt', 'success');
+    } catch (error) {
+        console.error('Error saving bulk schedule:', error);
+        showToast('❌ Lỗi: ' + error.message, 'error');
+    }
+}
+
+async function handleClearBulkSchedule() {
+    try {
+        await window.dbRef.set(window.dbRef.ref(window.db, 'settings/bulkSchedule'), null);
+        showToast('🗑️ Đã xóa lịch khóa hàng loạt', 'success');
+    } catch (error) {
+        console.error('Error clearing bulk schedule:', error);
+        showToast('❌ Lỗi: ' + error.message, 'error');
+    }
+}
+
+function renderBulkSchedule(data) {
+    if (data && data.active) {
+        const repeatText = data.repeat === 'daily' ? 'Hằng ngày' : 'Một lần';
+        elements.scheduleText.textContent = `${data.time} (${repeatText})`;
+        elements.activeSchedule.classList.remove('hidden');
+
+        // Cập nhật input UI
+        elements.bulkLockTime.value = data.time;
+        elements.bulkLockRepeat.value = data.repeat;
+    } else {
+        elements.activeSchedule.classList.add('hidden');
     }
 }
 

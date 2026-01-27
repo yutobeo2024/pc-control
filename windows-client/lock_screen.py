@@ -2,7 +2,7 @@
 Lock Screen - Màn hình khóa toàn màn hình
 """
 
-from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QPushButton
+from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QPushButton, QDialog
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont, QPalette, QColor
 
@@ -46,7 +46,7 @@ class LockScreen(QWidget):
         title.setFont(title_font)
 
         # Thông báo chờ
-        self.message = QLabel("Đang chờ phụ huynh cho phép...")
+        self.message = QLabel("Đang chờ admin cho phép, đợi xíu em trai...")
         self.message.setAlignment(Qt.AlignCenter)
         message_font = QFont("Segoe UI", 18)
         self.message.setFont(message_font)
@@ -97,15 +97,33 @@ class LockScreen(QWidget):
         self.stay_on_top_timer.start(500)  # Kiểm tra mỗi 0.5 giây
 
     def ensure_on_top(self):
-        """Đảm bảo cửa sổ luôn ở trên cùng"""
+        """Đảm bảo cửa sổ luôn ở trên cùng, trừ khi có dialog con đang mở"""
+        if not self.isVisible() or self.findChild(QWidget, "EmergencyDialog"):
+            return
+            
+        # Kiểm tra nếu có bất kỳ cửa sổ con nào đang là Modal
+        if self.findChildren(QDialog):
+            for dialog in self.findChildren(QDialog):
+                if dialog.isVisible() and dialog.isModal():
+                    return
+
         self.raise_()
         self.activateWindow()
+
+    def pause_stay_on_top(self):
+        """Tạm dừng việc cưỡng bức focus"""
+        self.stay_on_top_timer.stop()
+
+    def resume_stay_on_top(self):
+        """Tiếp tục cưỡng bức focus"""
+        if not self.stay_on_top_timer.isActive():
+            self.stay_on_top_timer.start(500)
 
     def animate_dots(self):
         """Hiệu ứng loading với dấu chấm"""
         self.dots_count = (self.dots_count + 1) % 4
         dots = "." * self.dots_count
-        self.message.setText(f"Đang chờ phụ huynh cho phép{dots}")
+        self.message.setText(f"Đang chờ admin cho phép, đợi xíu em trai{dots}")
 
     def set_device_id(self, device_id):
         """Hiển thị Device ID"""
@@ -163,7 +181,7 @@ class ApprovedScreen(QWidget):
         unlock_icon.setFont(icon_font)
 
         # Thông báo
-        message = QLabel("Phụ huynh đã cho phép!\nMáy tính sẽ mở khóa...")
+        message = QLabel("Admin đã cho phép!\nVào làm việc thôi em trai...")
         message.setAlignment(Qt.AlignCenter)
         message_font = QFont("Segoe UI", 24)
         message.setFont(message_font)

@@ -19,7 +19,7 @@ from config import (
 )
 
 # Web App URL
-WEB_APP_URL = "https://yutokun.netlify.app"
+WEB_APP_URL = "https://fancy-pc.netlify.app"
 
 
 class ParentalControlApp:
@@ -39,6 +39,7 @@ class ParentalControlApp:
         self.current_request_id = None
         self.is_running = True
         self.warning_sent = False
+        self.last_bulk_lock_date = None
 
         # Khởi tạo UI components
         self.lock_screen = None
@@ -62,6 +63,7 @@ class ParentalControlApp:
     def setup_system_tray(self):
         """Thiết lập system tray icon"""
         self.tray_icon = QSystemTrayIcon(self.app)
+        self.tray_icon.setIcon(QIcon("icon.png")) # Đảm bảo file icon.png tồn tại trong thư mục windows-client
 
         # Menu
         menu = QMenu()
@@ -138,14 +140,13 @@ class ParentalControlApp:
                 pass
             self.lock_screen = None
 
-        # Đóng approved screen (đảm bảo không còn cửa sổ nào)
-        if self.approved_screen:
+        if self.lock_screen:
             try:
-                self.approved_screen.close()
-                self.approved_screen.deleteLater()
+                self.lock_screen.close()
+                self.lock_screen.deleteLater()
             except:
                 pass
-            self.approved_screen = None
+            self.lock_screen = None
 
         self.is_locked = False
         self.firebase.update_status("unlocked")
@@ -170,7 +171,7 @@ class ParentalControlApp:
                     self.timer_widget.warning_shown.connect(self.show_warning)
 
                 self.timer_widget.set_time(time_remaining)
-                self.timer_widget.show()
+                # self.timer_widget.show()  # Đã ẩn đồng hồ đếm ngược theo yêu cầu
 
     def on_time_expired(self):
         """Xử lý khi hết thời gian"""
@@ -200,13 +201,18 @@ class ParentalControlApp:
         """Xử lý emergency unlock hotkey"""
         print("🚨 Emergency unlock requested!")
 
-        # Tạm ẩn lock screen để dialog hiển thị được
-        if self.lock_screen:
-            self.lock_screen.hide()
-
         try:
+            # Tạm dừng cưỡng bức focus để nhập password
+            if self.lock_screen:
+                self.lock_screen.pause_stay_on_top()
+
             # Hiện dialog nhập password (custom dialog)
-            password, ok = EmergencyDialog.get_emergency_password()
+            # Truyền self.lock_screen làm parent để dialog hiện lên trên màn hình khóa
+            password, ok = EmergencyDialog.get_emergency_password(self.lock_screen)
+
+            # Tiếp tục cưỡng bức focus sau khi đóng dialog
+            if self.lock_screen:
+                QTimer.singleShot(100, self.lock_screen.resume_stay_on_top)
 
             if ok and password == EMERGENCY_UNLOCK_PASSWORD:
                 print("✅ Emergency unlock approved!")
@@ -215,18 +221,24 @@ class ParentalControlApp:
                 # Sai password - hiện lại lock screen với thông báo lỗi
                 print("❌ Wrong password!")
                 if self.lock_screen:
-                    self.lock_screen.show()
+                    self.lock_screen.showFullScreen()
+                    self.lock_screen.raise_()
+                    self.lock_screen.activateWindow()
                     self.lock_screen.show_error_message("❌ Sai mật khẩu!")
             else:
                 # User hủy - hiện lại lock screen
                 print("⚠️ Emergency unlock cancelled")
                 if self.lock_screen:
-                    self.lock_screen.show()
+                    self.lock_screen.showFullScreen()
+                    self.lock_screen.raise_()
+                    self.lock_screen.activateWindow()
         except Exception as e:
             print(f"❌ Error in emergency unlock: {e}")
             # Nếu có lỗi, hiện lại lock screen
             if self.lock_screen:
-                self.lock_screen.show()
+                self.lock_screen.showFullScreen()
+                self.lock_screen.raise_()
+                self.lock_screen.activateWindow()
 
     def emergency_unlock(self):
         """Mở khóa khẩn cấp (khi server/webapp lỗi)"""
@@ -247,6 +259,9 @@ class ParentalControlApp:
         if not device_data:
             print("⚠️ Cannot connect to Firebase - check internet connection")
             return
+
+        # Kiểm tra lịch khóa hàng loạt
+        self.check_bulk_schedule()
 
         # Kiểm tra lệnh từ xa
         remote_status = device_data.get('status', '')
@@ -307,6 +322,34 @@ class ParentalControlApp:
                     else:
                         # Cập nhật thời gian hiện tại lên Firebase
                         self.firebase.update_time_remaining(current_time)
+
+    def check_bulk_schedule(self):
+        """Kiểm tra lịch khóa hàng loạt"""
+        schedule = self.firebase.get_bulk_schedule()
+        if not schedule or not schedule.get('active'):
+            return
+
+        from datetime import datetime
+        now = datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+        current_time_str = now.strftime("%H:%M")
+        
+        target_time = schedule.get('time')
+        repeat_type = schedule.get('repeat')
+        
+        # Nếu là "Một lần", kiểm tra xem có đúng ngày không
+        if repeat_type == 'once':
+            schedule_date = schedule.get('date')
+            if schedule_date != today_str:
+                return
+
+        # Kiểm tra giờ
+        if current_time_str == target_time:
+            if self.last_bulk_lock_date != today_str:
+                print(f"⏰ Bulk schedule reached ({target_time})! Locking...")
+                self.last_bulk_lock_date = today_str
+                if not self.is_locked:
+                    self.on_time_expired()
 
     def quit_app(self):
         """Thoát ứng dụng (chỉ admin)"""

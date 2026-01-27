@@ -28,18 +28,32 @@ class FirebaseHandler:
             return device_id
 
     def initialize_device(self):
-        """Khởi tạo thông tin thiết bị trên Firebase"""
+        """Khởi tạo hoặc cập nhật thông tin thiết bị trên Firebase"""
+        # Sử dụng update để không ghi đè các trường admin đã sửa (như deviceName tùy chỉnh)
+        import platform
+        import socket
+
+        # Lấy thông tin hệ thống
+        hostname = socket.gethostname()
+        os_info = f"{platform.system()} {platform.release()}"
+        
         device_data = {
             "status": "locked",
-            "timeLimit": 7200,  # 2 giờ mặc định
+            "timeLimit": 28800,  # 8 giờ mặc định cho nhân viên
             "timeRemaining": 0,
             "lastActive": self._get_timestamp(),
-            "deviceName": os.environ.get('COMPUTERNAME', 'Unknown'),
-            "parentId": "",
+            "hostname": hostname,
+            "os": os_info,
             "createdAt": self._get_timestamp()
         }
-        self.db.child(self.device_path).set(device_data)
-        print(f"Device initialized with ID: {self.device_id}")
+        
+        # Chỉ set deviceName nếu nó chưa tồn tại (để admin có thể đổi tên tùy ý)
+        existing_data = self.get_device_status()
+        if not existing_data or "deviceName" not in existing_data:
+            device_data["deviceName"] = hostname
+
+        self.db.child(self.device_path).update(device_data)
+        print(f"Device initialized/updated with ID: {self.device_id}")
 
     def send_unlock_request(self):
         """Gửi yêu cầu mở khóa máy tính"""
@@ -114,6 +128,14 @@ class FirebaseHandler:
             self.db.child(self.device_path).stream(stream_handler)
         except Exception as e:
             print(f"Error listening for commands: {e}")
+
+    def get_bulk_schedule(self):
+        """Lấy lịch khóa máy hàng loạt từ settings"""
+        try:
+            return self.db.child("settings/bulkSchedule").get().val()
+        except Exception as e:
+            print(f"Error getting bulk schedule: {e}")
+            return None
 
     def _get_timestamp(self):
         """Lấy timestamp hiện tại"""
