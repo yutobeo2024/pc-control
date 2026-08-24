@@ -337,19 +337,18 @@ Click vào device
 
 ---
 
-## 📊 So sánh Web App vs Flutter App
+## 📊 Vì sao dùng Web App thay vì app native
 
-| Tiêu chí | Web App | Flutter App |
-|----------|---------|-------------|
-| **Cài đặt** | Mở browser | Cần build & install |
-| **Update** | Tự động | Phải rebuild |
-| **iOS** | Safari (miễn phí) | Cần Mac + $99/năm |
-| **Android** | Chrome (miễn phí) | Cần Android Studio |
-| **Deploy** | `firebase deploy` | Build APK/IPA |
-| **Offline** | Có (với PWA) | Native support |
-| **Push Notif** | Qua Slack | FCM native |
+Dự án từng có một bản Flutter dở dang (chỉ có `lib/`, thiếu `android/` và
+`ios/` nên không build được) - đã gỡ bỏ. Web App là giao diện phụ huynh duy nhất:
 
-**Kết luận:** Web App đơn giản và đủ dùng cho mục đích này!
+| Tiêu chí | Web App |
+|----------|---------|
+| **Cài đặt** | Mở browser, "Add to Home Screen" là xong |
+| **Update** | Tự động khi deploy |
+| **iOS / Android** | Chạy được cả hai, không mất phí developer account |
+| **Deploy** | Push lên Netlify |
+| **Thông báo** | Notification trình duyệt (cần mở tab) + Slack |
 
 ---
 

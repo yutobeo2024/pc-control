@@ -1,25 +1,28 @@
-# Hướng dẫn Sử dụng Nhanh
+# Quick Start
 
-## Bước 1: Setup Firebase (5 phút)
+Cài đặt hệ thống Parental Control trong ~15 phút.
 
-1. Truy cập https://console.firebase.google.com
-2. Tạo project mới
-3. Enable **Realtime Database** (chọn test mode)
-4. Enable **Cloud Messaging**
-5. Lấy config và cập nhật vào:
-   - `windows-client/config.py`
-   - `mobile-app/android/app/google-services.json`
-   - `mobile-app/ios/Runner/GoogleService-Info.plist`
-
-📖 Chi tiết: [firebase/README.md](firebase/README.md)
+Hệ thống gồm 2 phần: **Windows client** (chạy trên máy con) và
+**Web app** (phụ huynh mở trên điện thoại). Firebase làm kênh trung gian.
 
 ---
 
-## Bước 2: Cài đặt Windows Client
+## 1. Setup Firebase (5 phút)
 
-### Yêu cầu
-- Python 3.8 trở lên
-- Windows 10/11
+Làm theo [`firebase/README.md`](firebase/README.md). Tóm tắt:
+
+1. Tạo project trên [Firebase Console](https://console.firebase.google.com)
+2. **Realtime Database** → Create Database → chọn region gần nhất → Start in locked mode
+3. **Authentication** → Sign-in method → bật **Google**
+4. **Realtime Database → Rules** → dán nội dung [`firebase/database.rules.json`](firebase/database.rules.json)
+   → sửa email phụ huynh trong rules cho đúng → **Publish**
+5. **Project settings → Your apps → Web (`</>`)** → copy `firebaseConfig`
+
+---
+
+## 2. Windows Client (5 phút)
+
+Chạy trên **máy tính của con**.
 
 ### Cài đặt
 
@@ -28,258 +31,130 @@ cd windows-client
 pip install -r requirements.txt
 ```
 
-### Chạy ứng dụng
+Hoặc chạy `install-dependencies.bat`.
+
+### Cấu hình
 
 ```bash
-python main.py
+copy config.example.py config.py
 ```
 
-**Khi chạy lần đầu:**
-- App sẽ tạo file `device_id.txt` với ID duy nhất
-- Màn hình khóa sẽ hiện lên ngay lập tức
-- Yêu cầu mở khóa được gửi tới Firebase
+Mở `config.py`, thay `FIREBASE_CONFIG` bằng config lấy ở bước 1.
 
-**Lưu ý Device ID:**
-- Copy Device ID từ màn hình khóa hoặc system tray
-- Dùng ID này để đăng ký trên mobile app
+### Đổi mật khẩu khẩn cấp
+
+```bash
+python set_password.py
+```
+
+⚠️ Bắt buộc — mật khẩu mặc định là `admin123`. Đây là cách duy nhất mở khóa
+máy khi Firebase / web app gặp sự cố, nên hãy **ghi lại ở nơi an toàn**.
+
+### Chạy thử
+
+```bash
+run-debug.bat
+```
+
+Màn hình khóa sẽ hiện ra. Kiểm tra:
+- [ ] Alt+Tab, phím Windows, Alt+F4 bị chặn
+- [ ] `Ctrl+Shift+Alt+U` mở dialog nhập mật khẩu
+- [ ] Nhập đúng mật khẩu → máy mở khóa
+
+Thoát: chuột phải icon ở system tray → Exit (cần mật khẩu).
+
+### Bật auto-start
+
+Chuột phải `setup_autostart.bat` → **Run as administrator**.
+
+Gỡ bằng `remove_autostart.bat` (cũng cần quyền admin).
 
 ---
 
-## Bước 3: Cài đặt Mobile App
+## 3. Web App (5 phút)
 
-### Yêu cầu
-- Flutter 3.0 trở lên
-- Android Studio hoặc Xcode
+Chạy trên **điện thoại phụ huynh**.
 
-### Cài đặt
+### Cấu hình
 
-```bash
-cd mobile-app
-flutter pub get
-```
+Mở `web-app/public/index.html`, thay `firebaseConfig` (dòng ~126) bằng
+config lấy ở bước 1.
 
-### Chạy trên Android
+### Test local
 
 ```bash
-flutter run
+cd web-app
+run-local.bat
 ```
 
-### Chạy trên iOS
+Mở `http://localhost:8000`.
 
-```bash
-cd ios
-pod install
-cd ..
-flutter run
-```
+### Deploy
+
+Xem [`web-app/NETLIFY-DEPLOY.md`](web-app/NETLIFY-DEPLOY.md).
+Sau khi deploy, thêm domain vào **Firebase Console → Authentication →
+Settings → Authorized domains**.
+
+Trên điện thoại: mở URL → menu trình duyệt → **Add to Home Screen**.
+
+### Bật thông báo
+
+Bấm nút 🔔 ở góc trên bên phải → cho phép notification.
+
+⚠️ Thông báo chỉ đến khi tab web app còn mở (kể cả ở nền). Muốn nhận khi
+đã đóng hẳn trình duyệt thì cần Slack (bước 4) hoặc FCM Web Push.
 
 ---
 
-## Cách Sử dụng
+## 4. (Tùy chọn) Thông báo Slack
 
-### 1. Xác thực Mở máy
+Slack hoạt động kể cả khi không mở web app — đáng để cấu hình.
 
-**Trên máy tính con:**
-1. Bật máy tính
-2. Màn hình khóa hiện: "Đang chờ phụ huynh cho phép..."
-3. Device ID hiển thị ở dưới màn hình
-
-**Trên điện thoại phụ huynh:**
-1. Mở app
-2. Nhận thông báo yêu cầu mở máy
-3. Bấm **"Cho phép"** → Máy tính mở khóa
-4. Bấm **"Từ chối"** → Máy tính vẫn bị khóa
-
-### 2. Giới hạn Thời gian
-
-**Cài đặt thời gian mặc định:**
-1. Vào màn hình điều khiển thiết bị
-2. Chọn "Giới hạn thời gian mặc định"
-3. Chọn: 1 giờ / 2 giờ / 3 giờ
-
-**Đồng hồ đếm ngược:**
-- Hiển thị góc phải trên màn hình con
-- Màu xám: bình thường
-- Màu đỏ + cảnh báo: còn ≤ 10 phút
-- Hết giờ → Tự động khóa máy
-
-### 3. Điều khiển Từ xa
-
-**Xem trạng thái:**
-- Màn hình chính hiển thị danh sách thiết bị
-- Trạng thái: Đã khóa / Đang hoạt động / Chờ phê duyệt
-- Thời gian còn lại (nếu đang mở khóa)
-
-**Khóa máy ngay:**
-1. Chọn thiết bị
-2. Bấm nút **"Khóa máy ngay"**
-3. Máy tính sẽ bị khóa ngay lập tức
-
-**Thêm thời gian:**
-1. Chọn thiết bị đang mở khóa
-2. Bấm: **+15 phút** / **+30 phút** / **+1 giờ**
-3. Thời gian được cộng thêm tức thì
-
----
-
-## Giao diện
-
-### Mobile App
-
-#### Màn hình Chính
-```
-┌─────────────────────────┐
-│  Parental Control       │
-├─────────────────────────┤
-│                         │
-│  🔔 Yêu cầu mở máy      │
-│     PC-Con-Nha          │
-│     Vừa xong            │
-│                         │
-│  [ Từ chối ] [ Cho phép ]│
-│                         │
-├─────────────────────────┤
-│                         │
-│  💻 PC-Con-Nha          │
-│     Đang hoạt động      │
-│     Còn 1h 45m 30s      │
-│                    →    │
-│                         │
-└─────────────────────────┘
-```
-
-#### Màn hình Điều khiển
-```
-┌─────────────────────────┐
-│  ✅ Đang hoạt động      │
-│     ● Online            │
-├─────────────────────────┤
-│                         │
-│  ⏱️ Thời gian còn lại   │
-│      01:45:30           │
-│                         │
-├─────────────────────────┤
-│                         │
-│  [    Khóa máy ngay    ]│
-│                         │
-│  [+15p] [+30p] [+1h]    │
-│                         │
-│  Giới hạn mặc định:     │
-│  [1h]   [2h]   [3h]     │
-│                         │
-└─────────────────────────┘
-```
-
-### Windows Client
-
-#### Màn hình Khóa
-```
-┌─────────────────────────┐
-│                         │
-│         🔒              │
-│                         │
-│  Máy tính đã bị khóa    │
-│                         │
-│  Đang chờ phụ huynh     │
-│  cho phép...            │
-│                         │
-│  Device ID: abc123...   │
-│                         │
-└─────────────────────────┘
-```
-
-#### Đồng hồ Đếm ngược (góc màn hình)
-```
-┌──────────────┐
-│   ⏱️         │
-│  01:45:30    │
-└──────────────┘
-```
-
----
-
-## Troubleshooting
-
-### Máy tính không kết nối Firebase
-
-1. Kiểm tra `windows-client/config.py`
-2. Đảm bảo `databaseURL` đúng
-3. Test kết nối:
+1. Tạo Incoming Webhook: https://api.slack.com/messaging/webhooks
+2. Windows client:
    ```bash
-   python -c "from firebase_handler import FirebaseHandler; fb = FirebaseHandler(); print('OK')"
+   cd windows-client
+   python slack_notifier.py
    ```
-
-### Mobile app không nhận thông báo
-
-1. Kiểm tra permissions (Settings → Notifications)
-2. Đảm bảo FCM đã enable trong Firebase Console
-3. Xem log: `flutter logs`
-
-### Màn hình khóa không hiện
-
-1. Chạy Python với quyền Administrator
-2. Kiểm tra PyQt5 đã cài đúng:
-   ```bash
-   python -c "from PyQt5 import QtWidgets; print('OK')"
-   ```
-
-### Device không hiện trên mobile app
-
-1. Kiểm tra Database Rules (test mode)
-2. Kiểm tra Device ID từ `windows-client/device_id.txt`
-3. Xem Firebase Console → Realtime Database
+   Dán webhook URL vào. File lưu tại `windows-client/slack_webhook.txt`.
+3. Web app: mở `slack-setup.html` trên web app và dán cùng webhook URL.
 
 ---
 
-## Nâng cao
+## Luồng hoạt động
 
-### Auto-start Windows Client
-
-**Thêm vào Startup (Windows):**
-
-1. Tạo shortcut của `main.py`
-2. Copy vào: `C:\Users\<username>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup`
-
-**Hoặc dùng Task Scheduler:**
 ```
-Trigger: At startup
-Action: Start program
-  Program: pythonw.exe
-  Arguments: "D:\yuto control\windows-client\main.py"
-```
+Con bật máy
+   → Màn hình khóa + gửi yêu cầu lên Firebase
+   → Phụ huynh nhận thông báo trên web app / Slack
+   → Bấm "Cho phép"  → máy mở khóa (không giới hạn thời gian)
+     Bấm "Từ chối"   → máy vẫn khóa, tự gửi lại yêu cầu sau 30 giây
 
-### Chạy ẩn (không hiện console)
-
-Thay `python main.py` bằng:
-```bash
-pythonw main.py
-```
-
-### Build Mobile App (Release)
-
-**Android:**
-```bash
-flutter build apk --release
-```
-
-**iOS:**
-```bash
-flutter build ios --release
+Khi muốn khóa lại:
+   → Mở web app → chọn thiết bị → "Khóa ngay" hoặc hẹn giờ 30p / 1h / 1.5h / 2h / 3h
 ```
 
 ---
 
-## Bảo mật
+## Xử lý sự cố
 
-⚠️ **Lưu ý:**
-- Database đang ở test mode (ai cũng có thể đọc/ghi)
-- Sau khi test xong, cập nhật Rules theo hướng dẫn trong `firebase/README.md`
-- Thêm Firebase Authentication để bảo mật hơn
+| Triệu chứng | Nguyên nhân thường gặp |
+|---|---|
+| Web app báo "Email không được phép" | Email chưa có trong Security Rules → sửa rules và Publish lại |
+| Windows client không kết nối được | Sai `FIREBASE_CONFIG`, hoặc `databaseURL` thiếu region |
+| Thiết bị luôn hiện Offline | Client không chạy, hoặc đồng hồ máy con sai giờ (`lastActive` lệch) |
+| Không thấy thiết bị nào | Client chưa chạy lần nào — kiểm tra `windows-client/device_id.txt` |
+| Bị khóa mà không mở được | Dùng `Ctrl+Shift+Alt+U`. Nếu quên mật khẩu: khởi động vào Safe Mode và xóa scheduled task |
+| Đăng nhập Google lỗi `unauthorized-domain` | Chưa thêm domain vào Firebase → Authentication → Authorized domains |
+
+Xem log chi tiết: chạy `windows-client/run-debug.bat` (có console).
 
 ---
 
-## Hỗ trợ
+## Đọc thêm
 
-- **Issues:** GitHub Issues
-- **Docs:** [README.md](README.md)
-- **Firebase:** [firebase/README.md](firebase/README.md)
+- [`README.md`](README.md) — kiến trúc, schema database
+- [`WEB-APP-QUICKSTART.md`](WEB-APP-QUICKSTART.md) — hướng dẫn web app đầy đủ
+- [`windows-client/SAFETY-FEATURES.md`](windows-client/SAFETY-FEATURES.md) — mở khóa khẩn cấp
+- [`windows-client/AUTO-START-GUIDE.md`](windows-client/AUTO-START-GUIDE.md) — auto-start
+- [`SECURITY-SUMMARY.md`](SECURITY-SUMMARY.md) — tình trạng bảo mật & hạn chế đã biết

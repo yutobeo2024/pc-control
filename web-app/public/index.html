@@ -127,7 +127,7 @@
     <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-        import { getDatabase, ref, onValue, update, set } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
+        import { getDatabase, ref, onValue, update, set, remove, get, query, orderByChild, equalTo } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
 
         // Firebase config
@@ -148,7 +148,7 @@
         const provider = new GoogleAuthProvider();
 
         window.db = db;
-        window.dbRef = { ref, onValue, update, set };
+        window.dbRef = { ref, onValue, update, set, remove, get, query, orderByChild, equalTo };
         window.auth = auth;
 
         // Authentication handler

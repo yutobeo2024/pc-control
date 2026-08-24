@@ -13,6 +13,8 @@ class LockScreen(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._allow_close = False
+        self._retry_seconds = 0
         self.init_ui()
 
     def init_ui(self):
@@ -63,6 +65,10 @@ class LockScreen(QWidget):
         self.dots_timer.timeout.connect(self.animate_dots)
         self.dots_count = 0
         self.dots_timer.start(500)
+
+        # Đếm ngược sau khi yêu cầu bị từ chối
+        self.retry_timer = QTimer()
+        self.retry_timer.timeout.connect(self._tick_retry)
 
         # Device ID info
         self.device_info = QLabel("")
@@ -116,11 +122,43 @@ class LockScreen(QWidget):
         self.dots_timer.stop()
         self.message.setText(message)
 
+    def reset_message(self):
+        """Quay về trạng thái chờ phụ huynh duyệt"""
+        self.retry_timer.stop()
+        self._retry_seconds = 0
+        self.dots_count = 0
+        self.message.setText("Đang chờ phụ huynh cho phép")
+        self.dots_timer.start(500)
+
+    def show_rejected_message(self, retry_seconds):
+        """Hiển thị thông báo bị từ chối kèm đếm ngược tới lần gửi lại"""
+        self.dots_timer.stop()
+        self._retry_seconds = int(retry_seconds)
+        self._update_retry_text()
+        self.retry_timer.start(1000)
+
+    def _update_retry_text(self):
+        self.message.setText(
+            f"Phụ huynh đã từ chối.\nGửi lại yêu cầu sau {self._retry_seconds}s..."
+        )
+
+    def _tick_retry(self):
+        self._retry_seconds -= 1
+        if self._retry_seconds <= 0:
+            self.retry_timer.stop()
+            self.reset_message()
+        else:
+            self._update_retry_text()
+
     def show_error_message(self, message):
         """Hiển thị thông báo lỗi"""
         self.error_label.setText(message)
         # Tự động xóa sau 3 giây
         QTimer.singleShot(3000, lambda: self.error_label.setText(""))
+
+    def allow_close(self):
+        """Cho phép đóng cửa sổ (chỉ dùng khi admin thoát app)"""
+        self._allow_close = True
 
     def keyPressEvent(self, event):
         """Chặn phím tắt và xử lý emergency unlock"""
@@ -135,8 +173,14 @@ class LockScreen(QWidget):
         event.ignore()
 
     def closeEvent(self, event):
-        """Ngăn đóng cửa sổ"""
-        event.ignore()
+        """Ngăn đóng cửa sổ (trừ khi admin đã xác thực để thoát app)"""
+        if self._allow_close:
+            self.dots_timer.stop()
+            self.retry_timer.stop()
+            self.stay_on_top_timer.stop()
+            event.accept()
+        else:
+            event.ignore()
 
 
 class ApprovedScreen(QWidget):

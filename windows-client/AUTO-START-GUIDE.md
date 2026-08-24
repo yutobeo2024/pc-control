@@ -78,7 +78,7 @@ Nếu không muốn dùng Task Scheduler:
 1. ✅ **TEST Emergency Unlock** trước:
    - Chạy Windows Client thủ công
    - Bấm `Ctrl+Shift+Alt+U`
-   - Nhập password `admin123`
+   - Nhập password admin (mặc định `admin123`)
    - Xác nhận máy mở khóa được
 
 2. ✅ **ĐỔI password mặc định** trong `config.py`:
@@ -162,7 +162,7 @@ Nếu không muốn dùng Task Scheduler:
 Trước khi enable auto-start, check tất cả:
 
 - [ ] Emergency Unlock đã test thành công
-- [ ] Password đã đổi khỏi `admin123`
+- [ ] Password đã đổi khỏi `admin123` (chạy `python set_password.py`)
 - [ ] Password đã backup ở nơi an toàn
 - [ ] Web App login thành công
 - [ ] Web App approve/reject hoạt động

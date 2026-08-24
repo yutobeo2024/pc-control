@@ -4,6 +4,17 @@ Main Application - Ứng dụng Parental Control cho Windows
 
 import sys
 import os
+import time
+
+# Console Windows mặc định dùng cp1252 - emoji trong log sẽ ném
+# UnicodeEncodeError và làm sập app khi chạy bằng python.exe (run-debug.bat).
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None:
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QIcon, QKeySequence
@@ -12,11 +23,24 @@ from lock_screen import LockScreen, ApprovedScreen
 from timer_widget import TimerWidget, WarningDialog
 from slack_notifier import SlackNotifier
 from emergency_dialog import EmergencyDialog
-from config import (
-    CHECK_INTERVAL,
-    EMERGENCY_UNLOCK_ENABLED,
-    EMERGENCY_UNLOCK_PASSWORD
-)
+from input_blocker import InputBlocker
+from single_instance import SingleInstance
+from password_util import verify_password, is_default_password
+import config
+
+CHECK_INTERVAL = config.CHECK_INTERVAL
+EMERGENCY_UNLOCK_ENABLED = config.EMERGENCY_UNLOCK_ENABLED
+
+# Các tùy chọn mới - dùng getattr để không vỡ với config.py cũ
+HEARTBEAT_INTERVAL = getattr(config, "HEARTBEAT_INTERVAL", 5)
+REJECT_RETRY_DELAY = getattr(config, "REJECT_RETRY_DELAY", 30)
+BLOCK_SYSTEM_HOTKEYS = getattr(config, "BLOCK_SYSTEM_HOTKEYS", True)
+SINGLE_INSTANCE = getattr(config, "SINGLE_INSTANCE", True)
+REQUIRE_PASSWORD_TO_EXIT = getattr(config, "REQUIRE_PASSWORD_TO_EXIT", True)
+
+# Số lần liên tiếp đọc không thấy request thì mới coi là mất, tránh gửi lại
+# yêu cầu chỉ vì một lần lỗi mạng
+MISSING_REQUEST_THRESHOLD = 3
 
 # Web App URL
 WEB_APP_URL = "https://yutokun.netlify.app"
@@ -34,11 +58,19 @@ class ParentalControlApp:
         # Khởi tạo Slack Notifier
         self.slack = SlackNotifier()
 
+        # Chặn phím tắt hệ thống khi màn hình khóa đang hiện
+        self.input_blocker = InputBlocker()
+        self.app.aboutToQuit.connect(self.input_blocker.disable)
+
         # Trạng thái
         self.is_locked = True
+        self.is_unlocking = False        # chặn unlock bị kích hoạt lặp lại
         self.current_request_id = None
         self.is_running = True
         self.warning_sent = False
+        self.reject_retry_at = None      # thời điểm được phép gửi lại yêu cầu
+        self.missing_request_count = 0
+        self.last_heartbeat = 0.0
 
         # Khởi tạo UI components
         self.lock_screen = None
@@ -58,6 +90,10 @@ class ParentalControlApp:
         self.check_timer.start(CHECK_INTERVAL)
 
         print(f"App started - Device ID: {self.firebase.get_device_id()}")
+
+        if is_default_password():
+            print("⚠️ CẢNH BÁO: mật khẩu emergency unlock vẫn là mặc định.")
+            print("   Đổi ngay bằng: python set_password.py")
 
     def setup_system_tray(self):
         """Thiết lập system tray icon"""
@@ -97,10 +133,17 @@ class ParentalControlApp:
         self.lock_screen.raise_()
         self.lock_screen.activateWindow()
         self.is_locked = True
+        self.is_unlocking = False
+        self.reject_retry_at = None
+        self.missing_request_count = 0
 
-        # Ẩn timer widget nếu đang hiển thị
+        # Chặn Alt+Tab / Win / Alt+F4 khi đang khóa
+        if BLOCK_SYSTEM_HOTKEYS:
+            self.input_blocker.enable()
+
+        # Dừng hẳn timer widget (hide() không dừng QTimer bên trong)
         if self.timer_widget:
-            self.timer_widget.hide()
+            self.timer_widget.stop()
 
         # Gửi yêu cầu mở khóa
         self.current_request_id = self.firebase.send_unlock_request()
@@ -112,6 +155,10 @@ class ParentalControlApp:
 
     def unlock_computer(self):
         """Mở khóa máy tính"""
+        if self.is_unlocking:
+            return
+        self.is_unlocking = True
+
         # Xóa approved screen cũ nếu có
         if self.approved_screen:
             try:
@@ -129,6 +176,9 @@ class ParentalControlApp:
 
     def complete_unlock(self):
         """Hoàn tất mở khóa - KHÔNG giới hạn thời gian"""
+        # Bỏ chặn phím tắt hệ thống
+        self.input_blocker.disable()
+
         # Đóng lock screen
         if self.lock_screen:
             try:
@@ -148,6 +198,7 @@ class ParentalControlApp:
             self.approved_screen = None
 
         self.is_locked = False
+        self.is_unlocking = False
         self.firebase.update_status("unlocked")
 
         # Kiểm tra xem có timeRemaining từ Firebase không
@@ -158,9 +209,9 @@ class ParentalControlApp:
             # Nếu timeRemaining là None hoặc null → Không giới hạn thời gian
             if time_remaining is None:
                 print("✅ Unlocked with NO time limit")
-                # Ẩn timer widget
+                # Dừng hẳn timer widget nếu còn sót từ lần khóa trước
                 if self.timer_widget:
-                    self.timer_widget.hide()
+                    self.timer_widget.stop()
             else:
                 # Có giới hạn thời gian → Hiển thị timer
                 print(f"✅ Unlocked with {time_remaining}s time limit")
@@ -173,9 +224,25 @@ class ParentalControlApp:
                 self.timer_widget.show()
 
     def on_time_expired(self):
-        """Xử lý khi hết thời gian"""
+        """Xử lý khi hết thời gian / nhận lệnh khóa"""
+        # Đã khóa rồi thì bỏ qua. Lịch khóa và timer đếm ngược là hai nguồn độc
+        # lập cùng trỏ tới đây và thường nổ cách nhau 1-2 giây, không chặn thì
+        # sinh ra hai màn hình khóa và hai unlock request.
+        if self.is_locked:
+            return
+
         print("Time expired! Locking computer...")
+
+        # Dừng timer trước khi khóa, nếu không nó vẫn đếm ngầm sau khi bị ẩn
+        # và bắn time_expired thêm một lần nữa.
+        if self.timer_widget:
+            self.timer_widget.stop()
+
         self.firebase.update_status("locked")
+
+        # Lịch khóa đã chạy xong -> xóa, nếu không lần approve kế tiếp sẽ bị
+        # khóa lại ngay trong vòng 2 giây
+        self.firebase.clear_lock_schedule()
 
         # Gửi thông báo Slack
         device_name = os.environ.get('COMPUTERNAME', 'Unknown')
@@ -204,33 +271,44 @@ class ParentalControlApp:
         if self.lock_screen:
             self.lock_screen.hide()
 
+        # Tạm bỏ chặn phím tắt để gõ được mật khẩu bình thường
+        was_blocking = self.input_blocker.is_enabled
+        self.input_blocker.disable()
+
         try:
             # Hiện dialog nhập password (custom dialog)
             password, ok = EmergencyDialog.get_emergency_password()
 
-            if ok and password == EMERGENCY_UNLOCK_PASSWORD:
+            if ok and verify_password(password):
                 print("✅ Emergency unlock approved!")
                 self.emergency_unlock()
             elif ok:
                 # Sai password - hiện lại lock screen với thông báo lỗi
                 print("❌ Wrong password!")
+                if was_blocking:
+                    self.input_blocker.enable()
                 if self.lock_screen:
                     self.lock_screen.show()
                     self.lock_screen.show_error_message("❌ Sai mật khẩu!")
             else:
                 # User hủy - hiện lại lock screen
                 print("⚠️ Emergency unlock cancelled")
+                if was_blocking:
+                    self.input_blocker.enable()
                 if self.lock_screen:
                     self.lock_screen.show()
         except Exception as e:
             print(f"❌ Error in emergency unlock: {e}")
             # Nếu có lỗi, hiện lại lock screen
+            if was_blocking:
+                self.input_blocker.enable()
             if self.lock_screen:
                 self.lock_screen.show()
 
     def emergency_unlock(self):
         """Mở khóa khẩn cấp (khi server/webapp lỗi)"""
         print("🆘 EMERGENCY UNLOCK activated")
+        self.firebase.delete_request(self.current_request_id)
         self.current_request_id = None
         self.unlock_computer()
 
@@ -238,81 +316,158 @@ class ParentalControlApp:
         device_name = os.environ.get('COMPUTERNAME', 'Unknown')
         self.slack.send_emergency_unlock(device_name)
 
+    def send_heartbeat_if_due(self):
+        """
+        Cập nhật lastActive định kỳ để web app biết máy còn online.
+
+        Phải chạy độc lập với timer: khi mở khóa không giới hạn thời gian thì
+        không có timer nào ghi lên Firebase, lastActive sẽ đứng yên và web luôn
+        hiển thị Offline.
+        """
+        now = time.monotonic()
+        if now - self.last_heartbeat < HEARTBEAT_INTERVAL:
+            return
+        self.last_heartbeat = now
+        self.firebase.send_heartbeat()
+
+    def handle_locked_state(self, device_data, remote_status):
+        """Đang khóa - chờ phụ huynh duyệt"""
+        # Phụ huynh mở khóa thẳng từ trang thiết bị
+        if remote_status == 'unlocked':
+            print("Remote unlock received!")
+            self.firebase.delete_request(self.current_request_id)
+            self.current_request_id = None
+            self.unlock_computer()
+            return
+
+        # Đang trong thời gian chờ sau khi bị từ chối
+        if self.current_request_id is None:
+            if self.reject_retry_at and time.monotonic() >= self.reject_retry_at:
+                print("Retrying unlock request after rejection...")
+                self.reject_retry_at = None
+                self.current_request_id = self.firebase.send_unlock_request()
+                if self.lock_screen:
+                    self.lock_screen.reset_message()
+            return
+
+        request_status = self.firebase.check_request_status(self.current_request_id)
+
+        if request_status == 'approved':
+            print("Unlock approved!")
+            self.missing_request_count = 0
+            # Xóa request đã xử lý để nhánh requests/ không phình vô hạn
+            self.firebase.delete_request(self.current_request_id)
+            self.current_request_id = None
+            self.unlock_computer()
+
+        elif request_status == 'rejected':
+            print(f"Request rejected! Retrying in {REJECT_RETRY_DELAY}s...")
+            self.missing_request_count = 0
+            self.firebase.delete_request(self.current_request_id)
+            self.current_request_id = None
+            self.reject_retry_at = time.monotonic() + REJECT_RETRY_DELAY
+            if self.lock_screen:
+                self.lock_screen.show_rejected_message(REJECT_RETRY_DELAY)
+
+        elif request_status is None:
+            # Request biến mất (bị dọn, hoặc lỗi mạng). Chỉ gửi lại khi lỗi lặp
+            # nhiều lần liên tiếp, tránh tạo request thừa vì một lần timeout.
+            self.missing_request_count += 1
+            if self.missing_request_count >= MISSING_REQUEST_THRESHOLD:
+                print("Request missing - sending a new one")
+                self.missing_request_count = 0
+                self.current_request_id = self.firebase.send_unlock_request()
+
+        else:
+            self.missing_request_count = 0
+
+    def handle_unlocked_state(self, device_data, remote_status):
+        """Đang mở khóa - chờ lệnh khóa"""
+        if remote_status == 'locked':
+            # Khóa ngay
+            print("Remote lock command received!")
+            self.on_time_expired()
+            return
+
+        # Kiểm tra lockScheduled (khóa có delay)
+        lock_scheduled = device_data.get('lockScheduled')
+        if lock_scheduled and lock_scheduled > 0:
+            current_time_ms = int(time.time() * 1000)
+            if current_time_ms >= lock_scheduled:
+                # Đã đến giờ khóa
+                print("Scheduled lock time reached! Locking...")
+                self.on_time_expired()
+                return
+
+        # Cập nhật thời gian từ Firebase (nếu có timer)
+        remote_time = device_data.get('timeRemaining')
+
+        # timeRemaining = None nghĩa là mở khóa không giới hạn thời gian
+        if remote_time is None:
+            return
+
+        if not self.timer_widget:
+            self.timer_widget = TimerWidget()
+            self.timer_widget.time_expired.connect(self.on_time_expired)
+            self.timer_widget.warning_shown.connect(self.show_warning)
+            self.timer_widget.set_time(remote_time)
+            self.timer_widget.show()
+            return
+
+        # Đồng bộ thời gian nếu lệch nhiều
+        current_time = self.timer_widget.time_remaining
+        if abs(remote_time - current_time) > 5:
+            print(f"Syncing time: {remote_time}s")
+            self.timer_widget.set_time(remote_time)
+        else:
+            # Cập nhật thời gian hiện tại lên Firebase
+            self.firebase.update_time_remaining(current_time)
+
     def check_firebase_updates(self):
         """Kiểm tra cập nhật từ Firebase"""
         if not self.is_running:
             return
+
+        # Heartbeat chạy trước và độc lập với mọi nhánh logic bên dưới
+        self.send_heartbeat_if_due()
 
         device_data = self.firebase.get_device_status()
         if not device_data:
             print("⚠️ Cannot connect to Firebase - check internet connection")
             return
 
-        # Kiểm tra lệnh từ xa
         remote_status = device_data.get('status', '')
 
-        # Nếu đang khóa, kiểm tra xem có được phê duyệt không
-        if self.is_locked and self.current_request_id:
-            request_status = self.firebase.check_request_status(self.current_request_id)
+        # Đang trong 2 giây chuyển cảnh mở khóa - bỏ qua để không kích hoạt lặp
+        if self.is_unlocking:
+            return
 
-            if request_status == 'approved':
-                print("Unlock approved!")
-                self.unlock_computer()
-                self.current_request_id = None
-            elif request_status == 'rejected':
-                print("Request rejected! Sending new request...")
-                # Reset và gửi request mới
-                self.current_request_id = self.firebase.send_unlock_request()
-            elif remote_status == 'unlocked':
-                # Phụ huynh unlock từ xa
-                self.unlock_computer()
-                self.current_request_id = None
-
-        # Nếu đang mở khóa, kiểm tra lệnh khóa từ xa
-        elif not self.is_locked:
-            if remote_status == 'locked':
-                # Khóa ngay
-                print("Remote lock command received!")
-                self.on_time_expired()
-
-            # Kiểm tra lockScheduled (khóa có delay)
-            lock_scheduled = device_data.get('lockScheduled')
-            if lock_scheduled and lock_scheduled > 0:
-                import time
-                current_time_ms = int(time.time() * 1000)
-                if current_time_ms >= lock_scheduled:
-                    # Đã đến giờ khóa
-                    print(f"Scheduled lock time reached! Locking...")
-                    self.on_time_expired()
-
-        # Cập nhật thời gian từ Firebase (nếu có timer)
-        if not self.is_locked:
-            remote_time = device_data.get('timeRemaining')
-
-            # Nếu có timeRemaining (không phải None)
-            if remote_time is not None:
-                # Nếu chưa có timer widget, tạo mới
-                if not self.timer_widget:
-                    self.timer_widget = TimerWidget()
-                    self.timer_widget.time_expired.connect(self.on_time_expired)
-                    self.timer_widget.warning_shown.connect(self.show_warning)
-                    self.timer_widget.set_time(remote_time)
-                    self.timer_widget.show()
-                else:
-                    # Đồng bộ thời gian nếu khác nhiều
-                    current_time = self.timer_widget.time_remaining
-                    if abs(remote_time - current_time) > 5:
-                        print(f"Syncing time: {remote_time}s")
-                        self.timer_widget.set_time(remote_time)
-                    else:
-                        # Cập nhật thời gian hiện tại lên Firebase
-                        self.firebase.update_time_remaining(current_time)
+        if self.is_locked:
+            self.handle_locked_state(device_data, remote_status)
+        else:
+            self.handle_unlocked_state(device_data, remote_status)
 
     def quit_app(self):
-        """Thoát ứng dụng (chỉ admin)"""
-        # TODO: Thêm xác thực admin password
+        """Thoát ứng dụng (yêu cầu mật khẩu admin)"""
+        if REQUIRE_PASSWORD_TO_EXIT:
+            was_blocking = self.input_blocker.is_enabled
+            self.input_blocker.disable()
+
+            password, ok = EmergencyDialog.get_emergency_password()
+            if not (ok and verify_password(password)):
+                print("❌ Exit denied - wrong password")
+                if was_blocking:
+                    self.input_blocker.enable()
+                if self.lock_screen and self.is_locked:
+                    self.lock_screen.show()
+                    self.lock_screen.show_error_message("❌ Sai mật khẩu!")
+                return
+
+        print("👋 Exiting...")
         self.is_running = False
+        self.input_blocker.disable()
         if self.lock_screen:
+            self.lock_screen.allow_close()
             self.lock_screen.close()
         if self.timer_widget:
             self.timer_widget.close()
@@ -325,13 +480,25 @@ class ParentalControlApp:
 
 def main():
     """Entry point"""
+    guard = None
+    if SINGLE_INSTANCE:
+        guard = SingleInstance()
+        if guard.already_running:
+            print("⚠️ Parental Control đang chạy rồi - thoát instance này.")
+            return
+
     try:
         app = ParentalControlApp()
         sys.exit(app.run())
+    except SystemExit:
+        raise
     except Exception as e:
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        if guard:
+            guard.release()
 
 
 if __name__ == "__main__":

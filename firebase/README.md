@@ -13,27 +13,38 @@
 1. Trong Firebase Console, chọn "Realtime Database" từ menu bên trái
 2. Click "Create Database"
 3. Chọn location gần nhất (VD: `asia-southeast1`)
-4. Chọn "Start in test mode" (tạm thời)
+4. Chọn "Start in locked mode"
 5. Click "Enable"
 
 ### Cấu hình Security Rules
 
 1. Chọn tab "Rules"
-2. Copy nội dung từ file `database.rules.json`
-3. Click "Publish"
+2. Copy **toàn bộ** nội dung file [`database.rules.json`](database.rules.json)
+3. Sửa danh sách email phụ huynh trong rules cho đúng tài khoản của bạn
+4. Click "Publish"
+5. Kiểm chứng: `python verify-rules.py` (kỳ vọng **8/8**)
 
-## Bước 3: Enable Cloud Messaging (FCM)
+> `database.rules.json` là **nguồn duy nhất** cho Security Rules của dự án.
+> Đừng dán rules "test mode" (`.read: true / .write: true`) lên production —
+> ai cũng đọc/ghi được database.
 
-1. Chọn "Cloud Messaging" từ menu bên trái
-2. Click "Get started"
-3. Cloud Messaging sẽ được kích hoạt tự động
+Rules chia 2 tầng: tầng collection chỉ cho phụ huynh đã đăng nhập, tầng node lẻ
+mở thêm cho Windows client (không đăng nhập). Xem
+[FIREBASE-SECURITY-SETUP.md](../FIREBASE-SECURITY-SETUP.md) để hiểu vì sao.
 
-## Bước 4: Lấy Config cho Windows Client
+## Bước 3: Enable Authentication (Google Sign-In)
+
+1. Chọn "Authentication" → tab "Sign-in method"
+2. Bật provider **Google**
+3. Sang tab "Settings" → "Authorized domains"
+4. Thêm domain của web app (VD: `yutokun.netlify.app`)
+
+## Bước 4: Lấy Config cho Windows Client & Web App
 
 1. Click vào icon Settings (bánh răng) > "Project settings"
 2. Scroll xuống "Your apps"
 3. Click vào icon Web (`</>`)
-4. Đặt tên app: `Windows Client`
+4. Đặt tên app: `Parental Control`
 5. Không cần check "Firebase Hosting"
 6. Click "Register app"
 
@@ -51,34 +62,9 @@ const firebaseConfig = {
 };
 ```
 
-8. Mở file `windows-client/config.py`
-9. Thay thế các giá trị trong `FIREBASE_CONFIG` bằng các giá trị từ Firebase
-
-## Bước 5: Lấy Config cho Mobile App (Flutter)
-
-### Android
-
-1. Trong Project Settings, scroll xuống "Your apps"
-2. Click vào icon Android
-3. Nhập package name: `com.parentalcontrol.app`
-4. Click "Register app"
-5. Download file `google-services.json`
-6. Copy vào: `mobile-app/android/app/google-services.json`
-
-### iOS
-
-1. Click vào icon iOS
-2. Nhập bundle ID: `com.parentalcontrol.app`
-3. Click "Register app"
-4. Download file `GoogleService-Info.plist`
-5. Copy vào: `mobile-app/ios/Runner/GoogleService-Info.plist`
-
-## Bước 6: Cấu hình Server Key cho FCM (Push Notifications)
-
-1. Trong Project Settings, chọn tab "Cloud Messaging"
-2. Scroll xuống "Cloud Messaging API (Legacy)"
-3. Click "Enable" nếu chưa bật
-4. Copy "Server key" (sẽ dùng cho mobile app)
+8. Windows client: copy `windows-client/config.example.py` thành `config.py`,
+   thay các giá trị trong `FIREBASE_CONFIG`
+9. Web app: thay `firebaseConfig` trong `web-app/public/index.html`
 
 ## Database Structure
 
@@ -91,9 +77,9 @@ Sau khi setup xong, database sẽ có cấu trúc như sau:
       "status": "locked",
       "timeLimit": 7200,
       "timeRemaining": 7200,
+      "lockScheduled": null,
       "lastActive": 1234567890,
       "deviceName": "PC-Con-Nha",
-      "parentId": "parent-uuid-5678",
       "createdAt": 1234567890
     }
   },
@@ -109,40 +95,24 @@ Sau khi setup xong, database sẽ có cấu trúc như sau:
 }
 ```
 
+Ghi chú:
+- `timeRemaining` bị **xóa khỏi database** khi mở khóa không giới hạn thời gian
+  (web app set `null`). Client hiểu "không có key" = vô thời hạn.
+- `lastActive` được client cập nhật định kỳ (heartbeat) để web biết máy online.
+- Node trong `requests/` được client xóa ngay sau khi đọc kết quả duyệt/từ chối.
+
 ## Test Firebase
 
-Để test kết nối Firebase:
-
-```python
-# Test script
-python windows-client/firebase_handler.py
+```bash
+cd windows-client
+python -c "from firebase_handler import FirebaseHandler; print(FirebaseHandler().get_device_status())"
 ```
 
-## Bảo mật (Sau khi test xong)
+## Lưu ý bảo mật
 
-Cập nhật Rules để bảo mật hơn:
-
-```json
-{
-  "rules": {
-    "devices": {
-      "$device_id": {
-        ".read": "auth != null",
-        ".write": "auth != null && (auth.uid == data.child('parentId').val() || !data.exists())"
-      }
-    },
-    "requests": {
-      "$request_id": {
-        ".read": "auth != null",
-        ".write": "auth != null"
-      }
-    }
-  }
-}
-```
-
-## Lưu ý
-
-- Không commit file config có chứa API keys lên Git
-- Tạo file `.gitignore` để exclude các file config
-- Test mode chỉ dùng khi phát triển, production cần bật authentication
+- Không commit `windows-client/config.py` (đã có trong `.gitignore`)
+- Rules vẫn cho phép `auth == null` ở **mức node lẻ** để Windows client
+  (không đăng nhập) hoạt động. Ai biết chính xác device UUID vẫn ghi được vào
+  node đó — xem `SECURITY-SUMMARY.md`.
+  Hướng khắc phục: cho client đăng nhập bằng Firebase Anonymous Auth hoặc
+  custom token, rồi siết `$deviceId` về `auth != null && auth.uid == $deviceId`.

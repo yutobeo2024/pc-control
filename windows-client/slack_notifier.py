@@ -4,6 +4,12 @@ Slack Notifier - Gửi thông báo đến Slack khi có yêu cầu mở máy
 
 import requests
 import json
+from paths import app_path
+
+# Đường dẫn tuyệt đối cạnh ứng dụng - app thường được Task Scheduler khởi chạy
+# với working directory khác, và khi đóng gói .exe thì __file__ trỏ vào thư mục
+# tạm. app_path() phân giải đúng cho cả hai trường hợp.
+WEBHOOK_FILE = app_path("slack_webhook.txt")
 
 
 class SlackNotifier:
@@ -15,11 +21,14 @@ class SlackNotifier:
         self.webhook_url = webhook_url or self._load_webhook_url()
 
     def _load_webhook_url(self):
-        """Load webhook URL từ file config"""
+        """Load webhook URL từ file config (cạnh script, không phụ thuộc cwd)"""
         try:
-            with open('slack_webhook.txt', 'r') as f:
-                return f.read().strip()
+            with open(WEBHOOK_FILE, 'r', encoding='utf-8') as f:
+                return f.read().strip() or None
         except FileNotFoundError:
+            return None
+        except OSError as e:
+            print(f"Error reading Slack webhook file: {e}")
             return None
 
     def send_unlock_request(self, device_name, device_id, web_app_url):
@@ -218,9 +227,9 @@ def configure_slack_webhook():
 
     if webhook_url:
         if webhook_url.startswith('https://hooks.slack.com/'):
-            with open('slack_webhook.txt', 'w') as f:
+            with open(WEBHOOK_FILE, 'w', encoding='utf-8') as f:
                 f.write(webhook_url)
-            print("✅ Đã lưu webhook URL!")
+            print(f"✅ Đã lưu webhook URL vào {WEBHOOK_FILE}")
             return webhook_url
         else:
             print("❌ URL không hợp lệ")

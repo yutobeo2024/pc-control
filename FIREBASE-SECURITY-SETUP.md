@@ -27,54 +27,52 @@ Hiện tại Firebase Database của bạn **HOÀN TOÀN MỞ** cho bất kỳ a
 }
 ```
 
-**Rules MỚI (BẢO MẬT CAO):**
+**Rules MỚI:** dán **toàn bộ** nội dung file
+[`firebase/database.rules.json`](firebase/database.rules.json), rồi sửa hai
+email trong đó thành email của bạn và vợ.
 
-**QUAN TRỌNG:** Thay email của bạn và vợ vào đây!
+> ⚠️ `firebase/database.rules.json` là **nguồn duy nhất** cho Security
+> Rules. Đừng chép rules từ tài liệu này hay bất kỳ file .md nào khác — trước
+> đây dự án có nhiều bản rules mâu thuẫn nằm rải rác và rất dễ deploy nhầm.
 
-```json
-{
-  "rules": {
-    "devices": {
-      ".read": "auth != null && (auth.token.email == 'your-email@gmail.com' || auth.token.email == 'your-wife-email@gmail.com')",
-      ".write": "auth != null && (auth.token.email == 'your-email@gmail.com' || auth.token.email == 'your-wife-email@gmail.com')",
-      "$deviceId": {
-        ".read": "auth != null && (auth.token.email == 'your-email@gmail.com' || auth.token.email == 'your-wife-email@gmail.com')",
-        ".write": "auth != null && (auth.token.email == 'your-email@gmail.com' || auth.token.email == 'your-wife-email@gmail.com')"
-      }
-    },
-    "requests": {
-      ".read": "auth != null && (auth.token.email == 'your-email@gmail.com' || auth.token.email == 'your-wife-email@gmail.com')",
-      ".write": "auth != null && (auth.token.email == 'your-email@gmail.com' || auth.token.email == 'your-wife-email@gmail.com')",
-      "$requestId": {
-        ".read": "auth != null && (auth.token.email == 'your-email@gmail.com' || auth.token.email == 'your-wife-email@gmail.com')",
-        ".write": "auth != null && (auth.token.email == 'your-email@gmail.com' || auth.token.email == 'your-wife-email@gmail.com')"
-      }
-    }
-  }
-}
+**Giải thích cấu trúc rules — 2 tầng:**
+
+*Tầng collection* (`devices`, `requests`) — chỉ phụ huynh:
+```
+"auth != null && (auth.token.email == 'email-1' || auth.token.email == 'email-2')"
 ```
 
-**Ví dụ với email thật:**
-```json
-{
-  "rules": {
-    "devices": {
-      ".read": "auth != null && (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')",
-      ".write": "auth != null && (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')"
-    },
-    "requests": {
-      ".read": "auth != null && (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')",
-      ".write": "auth != null && (auth.token.email == 'hanhtoami@gmail.com' || auth.token.email == 'thuydungsp@gmail.com')"
-    }
-  }
-}
+*Tầng node* (`$deviceId`, `$requestId`) — thêm cửa cho Windows client:
+```
+"auth == null || (auth.token.email == 'email-1' || auth.token.email == 'email-2')"
 ```
 
-**Giải thích:**
-- `auth != null` → Phải đăng nhập
-- `auth.token.email == 'xxx'` → CHỈ email này mới được phép
-- Bảo mật ở **SERVER-SIDE** (Firebase), KHÔNG thể bypass
-- Email whitelist giờ nằm ở Firebase Rules, KHÔNG lộ ra frontend
+Vì sao chia 2 tầng: Windows client dùng `pyrebase` và **không đăng nhập**, nên
+bắt buộc phải chấp nhận `auth == null` ở đâu đó. Nhưng client chỉ đọc/ghi
+**từng node lẻ**, không bao giờ đụng cả collection — nên chỉ cần mở ở tầng node.
+
+Kết quả: người ngoài không `GET /devices.json` để liệt kê, cũng không
+`DELETE /devices.json` để xóa sạch được nữa.
+
+Rules Firebase **cascade theo hướng cấp quyền**: rule cha trả `false` KHÔNG
+chặn rule con trả `true`. Nên đóng tầng collection không làm hỏng client.
+
+`.indexOn: ["status", "timestamp"]` ở nhánh `requests` → để web app query được
+các request đang pending mà không phải tải cả nhánh.
+
+**Kiểm chứng sau khi Publish:**
+
+```bash
+cd firebase
+python verify-rules.py
+```
+
+Script gửi request không kèm token và kiểm tra cả hai chiều: người ngoài bị
+chặn, client vẫn chạy được. Kỳ vọng **8/8**.
+
+**Vẫn còn hở:** ai biết chính xác device UUID vẫn ghi được vào node đó. Sửa tận
+gốc cần Firebase **Anonymous Auth** — xem
+[SECURITY-SUMMARY.md](SECURITY-SUMMARY.md).
 
 ### 1.3. Publish Rules
 
@@ -147,48 +145,68 @@ netlify deploy --prod --dir=public
 
 ## 🔒 Các Lớp Bảo Mật
 
-Sau khi setup xong, hệ thống có **3 lớp bảo mật**:
+### Lớp 1: Google Authentication (Web App)
+- Bắt buộc đăng nhập Google mới vào được web app
+- Sau khi login, frontend thử đọc database; bị từ chối thì tự đăng xuất
 
-### Lớp 1: Email Whitelist (Frontend)
-- Kiểm tra ngay khi login
-- Chặn email không được phép
+### Lớp 2: Firebase Rules (Backend)
+- Whitelist email kiểm tra ở phía server, không bypass được từ frontend
+- Email không nằm trong frontend nên không lộ ra ngoài
 
-### Lớp 2: Firebase Authentication
-- Chỉ user đã login mới gọi Firebase API được
-- Firebase Rules yêu cầu `auth != null`
+### ⚠️ Lớp 2 hiện đang bị vô hiệu hóa một phần
 
-### Lớp 3: Firebase Rules (Backend)
-- Kiểm tra lại phía server
-- Chặn truy cập trực tiếp vào database
+Rules có nhánh `auth == null` (để Windows client hoạt động) được kiểm tra
+**trước** whitelist email. Người truy cập thẳng vào `databaseURL` mà không
+đăng nhập sẽ khớp nhánh này và có toàn quyền đọc/ghi.
+
+Nghĩa là hiện tại whitelist chỉ chặn được người đã đăng nhập bằng email lạ,
+không chặn được người không đăng nhập. Xem mục "VẤN ĐỀ VẪN CÒN TỒN TẠI" bên dưới.
 
 ---
 
 ## ⚠️ VẤN ĐỀ VẪN CÒN TỒN TẠI
 
-### 1. Firebase Credentials Vẫn Public
+### 1. Rules cho phép `auth == null` — điểm yếu chính
 
-❌ **Vấn đề:** Firebase config vẫn hiển thị trong HTML source code
+❌ **Vấn đề:** Rules hiện tại có nhánh `auth == null` để Windows client
+(không đăng nhập) hoạt động được. Kết hợp với `databaseURL` nằm công khai
+trong `web-app/public/index.html`, **bất kỳ ai cũng đọc/ghi được database mà
+không cần đăng nhập** — mở khóa máy, xóa dữ liệu.
 
-**Tại sao không nghiêm trọng:**
-- Firebase config **ĐƯỢC PHÉP** public (theo Google)
-- Bảo mật thật sự ở **Firebase Rules**
-- Chỉ cần Rules đúng là an toàn
+Google Auth và whitelist email chỉ chặn được người dùng đã đăng nhập; nhánh
+`auth == null` được kiểm tra trước nên trên thực tế whitelist không có tác dụng.
 
-**Nếu muốn ẩn hoàn toàn:**
-- Cần setup Firebase Backend (Cloud Functions)
-- Chi phí ~$25/tháng
-- Phức tạp hơn nhiều
+**Hướng khắc phục:**
+1. Cho Windows client đăng nhập bằng Firebase **Anonymous Auth** (pyrebase hỗ
+   trợ `auth().sign_in_anonymous()`), lưu lại `uid`
+2. Đổi rules: `auth != null && (auth.uid == 'uid-cua-client' || auth.token.email == '...')`
+3. Client refresh token định kỳ (token Firebase hết hạn sau 1 giờ)
 
-**Quyết định:** GIỮ NGUYÊN (đủ an toàn cho use case này)
+**Chưa làm** — đây là việc cần làm tiếp theo nếu muốn hệ thống thật sự kín.
 
-### 2. Windows Client Credentials
+### 2. Firebase Credentials Public trong HTML
 
-✅ **An toàn:** Windows Client dùng Service Account credentials trong `config.py`
+⚠️ **Vấn đề:** Firebase config hiển thị trong HTML source code
 
-**Lý do:**
-- File `config.py` chỉ ở local máy con
-- Không public lên internet
-- Con không thể xem được (nếu máy bị khóa)
+**Tại sao bình thường không nghiêm trọng:**
+- Firebase web config **ĐƯỢC PHÉP** public (theo Google)
+- Bảo mật thật sự nằm ở Firebase Rules
+
+**Nhưng ở dự án này thì có:** vì Rules đang mở cho `auth == null` (mục 1),
+`databaseURL` public đồng nghĩa với database public. Sửa mục 1 thì mục này
+trở lại vô hại.
+
+### 3. Windows Client Credentials
+
+⚠️ Windows client dùng **cùng một Firebase web config** như web app
+(apiKey/databaseURL public), **không phải** service account.
+
+- `config.py` đã được `.gitignore` nên không lộ lên GitHub
+- Nhưng giá trị bên trong giống hệt cái đã public trong `index.html`
+- Nghĩa là giữ bí mật `config.py` không mang lại thêm bảo mật nào
+
+Mật khẩu emergency unlock trong `config.py` thì có giá trị bảo mật thật —
+và đã được lưu dạng SHA-256 hash thay vì plaintext.
 
 ---
 

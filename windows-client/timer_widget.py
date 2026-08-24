@@ -71,10 +71,18 @@ class TimerWidget(QWidget):
         self.setAutoFillBackground(True)
 
     def set_time(self, seconds):
-        """Đặt thời gian còn lại"""
+        """Đặt thời gian còn lại (tự khởi động lại đồng hồ nếu đang dừng)"""
         self.time_remaining = seconds
         self.warning_triggered = False
+        self.update_background_color(False)
         self.update_display()
+        if not self.countdown_timer.isActive():
+            self.countdown_timer.start(1000)
+
+    def stop(self):
+        """Dừng đếm ngược. Gọi khi khóa máy - hide() không dừng QTimer."""
+        self.countdown_timer.stop()
+        self.hide()
 
     def update_timer(self):
         """Cập nhật đồng hồ đếm ngược"""

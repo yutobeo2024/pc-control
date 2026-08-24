@@ -1,6 +1,6 @@
 # Web App - Parental Control
 
-Web app responsive cho mobile và desktop, thay thế cho Flutter mobile app.
+Web app responsive cho mobile và desktop. Đây là giao diện phụ huynh duy nhất của dự án.
 
 ## Tính năng
 

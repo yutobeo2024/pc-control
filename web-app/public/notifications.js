@@ -1,127 +1,176 @@
 /**
  * Push Notifications for Parental Control
- * Hiển thị thông báo khi có yêu cầu mở máy mới
+ * Hiển thị thông báo khi có yêu cầu mở máy mới.
+ *
+ * Notification được tạo qua Service Worker (`sw.js`) thay vì
+ * `new Notification(...)`: chỉ cách này mới hiện được nút "Cho phép" /
+ * "Từ chối" và rung trên mobile.
+ *
+ * GIỚI HẠN: không phải Web Push thật - trang web phải đang mở (kể cả ở tab
+ * nền) thì mới có thông báo. Muốn nhận khi đã đóng hẳn trình duyệt thì cần
+ * FCM Web Push: VAPID key + backend gửi message, xem README.
  */
+
+const SW_PATH = 'sw.js';
 
 class NotificationManager {
     constructor() {
         this.permission = 'default';
         this.notifiedRequests = new Set(); // Track requests đã thông báo
         this.isActive = false;
+        this.registration = null;
+    }
+
+    get isSupported() {
+        return 'Notification' in window;
+    }
+
+    /**
+     * Đăng ký Service Worker. Trả về registration hoặc null nếu không dùng được
+     * (trình duyệt cũ, hoặc trang chạy qua http:// không phải localhost).
+     */
+    async registerServiceWorker() {
+        if (this.registration) return this.registration;
+        if (!('serviceWorker' in navigator)) {
+            console.warn('⚠️ Trình duyệt không hỗ trợ Service Worker');
+            return null;
+        }
+
+        try {
+            this.registration = await navigator.serviceWorker.register(SW_PATH);
+            await navigator.serviceWorker.ready;
+
+            // Nhận hành động Cho phép / Từ chối bấm từ notification
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                const data = event.data || {};
+                if (data.type !== 'notification-action') return;
+
+                window.dispatchEvent(new CustomEvent('notification-action', {
+                    detail: {
+                        action: data.action,
+                        requestId: data.requestId,
+                        deviceId: data.deviceId
+                    }
+                }));
+            });
+
+            console.log('✅ Service Worker registered');
+            return this.registration;
+        } catch (error) {
+            console.error('❌ Service Worker registration failed:', error);
+            return null;
+        }
     }
 
     /**
      * Khởi tạo và xin quyền notification
      */
     async initialize() {
-        if (!('Notification' in window)) {
+        if (!this.isSupported) {
             console.warn('Browser không hỗ trợ notifications');
             return false;
         }
 
-        // Kiểm tra permission hiện tại
         this.permission = Notification.permission;
 
         if (this.permission === 'default') {
-            // Chưa xin quyền, xin ngay
             this.permission = await Notification.requestPermission();
         }
 
-        if (this.permission === 'granted') {
-            console.log('✅ Notification permission granted');
-            this.isActive = true;
-            return true;
-        } else {
+        if (this.permission !== 'granted') {
             console.warn('⚠️ Notification permission denied');
+            this.isActive = false;
             return false;
+        }
+
+        await this.registerServiceWorker();
+        console.log('✅ Notification permission granted');
+        this.isActive = true;
+        return true;
+    }
+
+    /**
+     * Hiển thị notification. Ưu tiên Service Worker (có nút bấm), nếu không
+     * đăng ký được thì rơi về Notification thường (không có nút).
+     */
+    async show(title, options) {
+        if (!this.isActive || this.permission !== 'granted') return;
+
+        try {
+            const registration = this.registration || await this.registerServiceWorker();
+            if (registration) {
+                await registration.showNotification(title, options);
+                return;
+            }
+
+            // Fallback: `actions` và `vibrate` sẽ bị bỏ qua
+            const { actions, vibrate, ...basic } = options;
+            new Notification(title, basic);
+        } catch (error) {
+            console.error('Error showing notification:', error);
         }
     }
 
     /**
-     * Hiển thị notification khi có yêu cầu mới
+     * Hiển thị notification khi có yêu cầu mở máy mới
      */
-    showUnlockRequest(deviceName, deviceId, requestId) {
-        if (!this.isActive || this.permission !== 'granted') {
-            return;
-        }
+    async showUnlockRequest(deviceName, deviceId, requestId) {
+        if (!this.isActive || this.permission !== 'granted') return;
 
-        // Kiểm tra đã thông báo chưa
-        if (this.notifiedRequests.has(requestId)) {
-            return;
-        }
-
-        // Mark as notified
+        // Tránh thông báo trùng cho cùng một request
+        if (this.notifiedRequests.has(requestId)) return;
         this.notifiedRequests.add(requestId);
 
-        // Tạo notification
-        const notification = new Notification('🔔 Yêu cầu mở máy', {
+        await this.show('🔔 Yêu cầu mở máy', {
             body: `${deviceName} đang yêu cầu mở máy`,
-            icon: '/favicon.ico', // Thêm icon nếu có
-            badge: '/badge.png', // Badge icon
-            tag: requestId, // Unique tag để replace notification cũ
-            requireInteraction: true, // Không tự đóng
-            silent: false, // Có âm thanh
-            vibrate: [200, 100, 200], // Rung trên mobile
-            data: {
-                deviceId: deviceId,
-                requestId: requestId,
-                deviceName: deviceName,
-                timestamp: Date.now()
-            },
+            tag: requestId,          // trùng tag -> thay thế notification cũ
+            renotify: true,
+            requireInteraction: true,
+            silent: false,
+            vibrate: [200, 100, 200],
+            data: { deviceId, requestId, deviceName, timestamp: Date.now() },
             actions: [
-                {
-                    action: 'approve',
-                    title: '✅ Cho phép',
-                    icon: '/approve-icon.png'
-                },
-                {
-                    action: 'reject',
-                    title: '❌ Từ chối',
-                    icon: '/reject-icon.png'
-                }
+                { action: 'approve', title: '✅ Cho phép' },
+                { action: 'reject', title: '❌ Từ chối' }
             ]
         });
-
-        // Click notification → Focus web app
-        notification.onclick = (event) => {
-            event.preventDefault();
-            window.focus();
-            notification.close();
-
-            // Scroll to device
-            const deviceCard = document.querySelector(`[data-device-id="${deviceId}"]`);
-            if (deviceCard) {
-                deviceCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                deviceCard.classList.add('highlight');
-                setTimeout(() => deviceCard.classList.remove('highlight'), 2000);
-            }
-        };
-
-        // Auto-close sau 30 giây nếu không requireInteraction
-        // (Trên desktop requireInteraction có thể bị ignore)
-        setTimeout(() => {
-            notification.close();
-        }, 30000);
 
         console.log(`🔔 Notification sent for ${deviceName}`);
     }
 
     /**
+     * Đóng notification của các request đã được xử lý xong.
+     * requireInteraction khiến notification nằm lại cho tới khi bị đóng tay,
+     * nên phải tự dọn khi request không còn pending.
+     */
+    async closeResolved(activeRequestIds) {
+        if (!this.registration) return;
+
+        try {
+            const active = new Set(activeRequestIds);
+            const shown = await this.registration.getNotifications();
+            shown.forEach((notification) => {
+                const requestId = notification.data && notification.data.requestId;
+                if (requestId && !active.has(requestId)) {
+                    notification.close();
+                }
+            });
+        } catch (error) {
+            console.error('Error closing notifications:', error);
+        }
+    }
+
+    /**
      * Hiển thị notification khi máy bị khóa
      */
-    showDeviceLocked(deviceName, delayMinutes) {
-        if (!this.isActive || this.permission !== 'granted') {
-            return;
-        }
-
+    async showDeviceLocked(deviceName, delayMinutes) {
         const message = delayMinutes === 0
             ? `${deviceName} đã bị khóa ngay lập tức`
             : `${deviceName} sẽ bị khóa sau ${delayMinutes} phút`;
 
-        new Notification('🔒 Máy tính bị khóa', {
+        await this.show('🔒 Máy tính bị khóa', {
             body: message,
-            icon: '/favicon.ico',
-            tag: `lock-${Date.now()}`,
+            tag: `lock-${deviceName}`,
             requireInteraction: false,
             silent: true
         });
@@ -130,15 +179,10 @@ class NotificationManager {
     /**
      * Hiển thị notification khi máy được mở
      */
-    showDeviceUnlocked(deviceName) {
-        if (!this.isActive || this.permission !== 'granted') {
-            return;
-        }
-
-        new Notification('✅ Máy tính đã mở', {
+    async showDeviceUnlocked(deviceName) {
+        await this.show('✅ Máy tính đã mở', {
             body: `${deviceName} đã được mở khóa`,
-            icon: '/favicon.ico',
-            tag: `unlock-${Date.now()}`,
+            tag: `unlock-${deviceName}`,
             requireInteraction: false,
             silent: true
         });
@@ -147,15 +191,15 @@ class NotificationManager {
     /**
      * Test notification
      */
-    test() {
+    async test() {
         if (!this.isActive) {
             console.error('Notifications not active');
             return;
         }
 
-        new Notification('🧪 Test Notification', {
+        await this.show('🧪 Test Notification', {
             body: 'Thông báo đang hoạt động!',
-            icon: '/favicon.ico',
+            tag: 'test',
             requireInteraction: false
         });
     }
@@ -167,16 +211,10 @@ class NotificationManager {
         this.notifiedRequests.clear();
     }
 
-    /**
-     * Disable notifications
-     */
     disable() {
         this.isActive = false;
     }
 
-    /**
-     * Enable notifications
-     */
     enable() {
         if (this.permission === 'granted') {
             this.isActive = true;

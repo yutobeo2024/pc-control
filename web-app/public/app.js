@@ -3,6 +3,15 @@ let currentDevices = {};
 let currentRequests = {};
 let selectedDevice = null;
 
+// Máy con gửi heartbeat mỗi 5 giây (HEARTBEAT_INTERVAL trong config.py).
+// Ngưỡng 20s cho phép lỡ vài nhịp vì mạng chập chờn mà chưa báo Offline.
+const ONLINE_THRESHOLD_SECONDS = 20;
+
+// Dọn request cũ: đã xử lý > 1 giờ, hoặc pending > 24 giờ (máy con đã tắt)
+const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const RESOLVED_REQUEST_TTL_SECONDS = 60 * 60;
+const PENDING_REQUEST_TTL_SECONDS = 24 * 60 * 60;
+
 // DOM Elements
 const elements = {
     connectionStatus: document.getElementById('connectionStatus'),
@@ -38,28 +47,24 @@ function init() {
         updateConnectionStatus(false);
     });
 
-    // Listen to requests
-    const requestsRef = window.dbRef.ref(window.db, 'requests');
-    window.dbRef.onValue(requestsRef, (snapshot) => {
-        const data = snapshot.val();
-        console.log('📨 Requests data from Firebase:', data);
-        currentRequests = {};
-
-        if (data) {
-            Object.keys(data).forEach(key => {
-                console.log(`Checking request ${key}:`, data[key]);
-                if (data[key].status === 'pending') {
-                    console.log('✅ Found pending request:', key, data[key]);
-                    currentRequests[key] = data[key];
-                } else {
-                    console.log(`⏭️ Skipping request ${key} with status:`, data[key].status);
-                }
-            });
-        }
-
-        console.log('Current pending requests:', currentRequests);
+    // Listen to requests - chỉ lấy các request đang pending.
+    // Trước đây load cả nhánh `requests` nên app chậm dần theo thời gian.
+    // Cần index `.indexOn: ["status"]` trong Security Rules.
+    const pendingQuery = window.dbRef.query(
+        window.dbRef.ref(window.db, 'requests'),
+        window.dbRef.orderByChild('status'),
+        window.dbRef.equalTo('pending')
+    );
+    window.dbRef.onValue(pendingQuery, (snapshot) => {
+        currentRequests = snapshot.val() || {};
         renderPendingRequests();
+    }, (error) => {
+        console.error('Error loading requests:', error);
     });
+
+    // Dọn request cũ còn sót lại (client offline nên không tự xóa được)
+    cleanupStaleRequests();
+    setInterval(cleanupStaleRequests, CLEANUP_INTERVAL_MS);
 
     // Event Listeners
     elements.approveBtn.addEventListener('click', handleApprove);
@@ -83,44 +88,41 @@ function updateConnectionStatus(connected) {
 
 // Render Pending Requests
 function renderPendingRequests() {
-    const pendingList = Object.entries(currentRequests);
-    console.log('🎨 Rendering pending requests. Count:', pendingList.length);
+    const pendingList = Object.entries(currentRequests)
+        .sort((a, b) => (a[1].timestamp || 0) - (b[1].timestamp || 0));
+
+    // Dọn notification của các request không còn pending
+    if (window.notificationManager) {
+        window.notificationManager.closeResolved(Object.keys(currentRequests));
+    }
 
     if (pendingList.length === 0) {
-        console.log('❌ No pending requests - hiding request card');
         elements.pendingRequests.classList.add('hidden');
         elements.noRequests.classList.remove('hidden');
         return;
     }
 
-    console.log('✅ Showing pending request card');
     elements.pendingRequests.classList.remove('hidden');
     elements.noRequests.classList.add('hidden');
 
-    // Show first pending request
+    // Hiển thị yêu cầu cũ nhất
     const [requestId, request] = pendingList[0];
-    console.log('Displaying request:', requestId, request);
-    elements.requestDeviceName.textContent = request.deviceName || 'Unknown Device';
+    const deviceName = request.deviceName || 'Unknown Device';
+
+    elements.requestDeviceName.textContent = deviceName;
     elements.requestTime.textContent = getTimeAgo(request.timestamp);
 
     // Send notification for new request
     if (window.notificationManager && window.notificationManager.isActive) {
-        window.notificationManager.showUnlockRequest(
-            request.deviceName || 'Unknown Device',
-            request.deviceId,
-            requestId
-        );
+        window.notificationManager.showUnlockRequest(deviceName, request.deviceId, requestId);
     }
 
-    // Store current request ID
+    // Lưu id lên CẢ HAI nút - thiếu deviceId ở nút từ chối khiến thông báo
+    // Slack luôn ghi "Unknown Device"
     elements.approveBtn.dataset.requestId = requestId;
-    elements.rejectBtn.dataset.requestId = requestId;
     elements.approveBtn.dataset.deviceId = request.deviceId;
-    console.log('Request card updated with:', {
-        deviceName: request.deviceName,
-        requestId,
-        deviceId: request.deviceId
-    });
+    elements.rejectBtn.dataset.requestId = requestId;
+    elements.rejectBtn.dataset.deviceId = request.deviceId;
 }
 
 // Render Devices List
@@ -140,7 +142,12 @@ function renderDevices() {
             const isUnlocked = device.status === 'unlocked';
             const icon = isUnlocked ? '💻' : '🔒';
             const statusText = device.statusText || (isUnlocked ? 'Đang hoạt động' : 'Đã khóa');
-            const timeText = isUnlocked ? formatTime(device.timeRemaining || 0) : '';
+
+            // Mở khóa vô thời hạn -> web set timeRemaining = null, Firebase xóa
+            // hẳn key. `|| 0` cũ khiến UI hiện "Còn 0h 0m".
+            const timeText = !isUnlocked
+                ? ''
+                : (hasTimeLimit(device) ? `Còn ${formatTime(device.timeRemaining)}` : '∞ Không giới hạn');
 
             return `
                 <div class="device-card" data-device-id="${deviceId}">
@@ -152,7 +159,7 @@ function renderDevices() {
                         <div class="device-status ${isUnlocked ? 'unlocked' : 'locked'}">
                             ${statusText}
                         </div>
-                        ${timeText ? `<div class="device-time">Còn ${timeText}</div>` : ''}
+                        ${timeText ? `<div class="device-time">${timeText}</div>` : ''}
                     </div>
                     <div class="device-arrow">›</div>
                 </div>
@@ -183,16 +190,13 @@ function openDeviceModal(deviceId) {
     document.getElementById('modalStatusText').className = `status-text ${isUnlocked ? 'unlocked' : 'locked'}`;
 
     // Online status
-    const isOnline = isDeviceOnline(device.lastActive);
-    const onlineStatus = document.getElementById('modalOnlineStatus');
-    onlineStatus.textContent = isOnline ? '● Online' : '○ Offline';
-    onlineStatus.className = `online-status ${isOnline ? '' : 'offline'}`;
+    renderOnlineStatus(device);
 
     // Timer
     const timerCard = document.getElementById('timerCard');
     if (isUnlocked) {
         timerCard.classList.remove('hidden');
-        updateTimer(device.timeRemaining || 0);
+        updateTimer(hasTimeLimit(device) ? device.timeRemaining : null);
         startTimerUpdates(deviceId);
     } else {
         timerCard.classList.add('hidden');
@@ -218,6 +222,16 @@ function openDeviceModal(deviceId) {
     elements.deviceModal.classList.remove('hidden');
 }
 
+// Cập nhật chỉ báo Online/Offline (gọi lại mỗi giây khi modal đang mở)
+function renderOnlineStatus(device) {
+    const onlineStatus = document.getElementById('modalOnlineStatus');
+    if (!onlineStatus) return;
+
+    const isOnline = isDeviceOnline(device.lastActive);
+    onlineStatus.textContent = isOnline ? '● Online' : '○ Offline';
+    onlineStatus.className = `online-status ${isOnline ? '' : 'offline'}`;
+}
+
 // Close Modal
 function closeModal() {
     elements.deviceModal.classList.add('hidden');
@@ -233,7 +247,8 @@ function startTimerUpdates(deviceId) {
     timerInterval = setInterval(() => {
         const device = currentDevices[deviceId];
         if (device) {
-            updateTimer(device.timeRemaining || 0);
+            updateTimer(hasTimeLimit(device) ? device.timeRemaining : null);
+            renderOnlineStatus(device);
         }
     }, 1000);
 }
@@ -245,10 +260,20 @@ function stopTimerUpdates() {
     }
 }
 
+// `seconds === null` nghĩa là mở khóa vô thời hạn
 function updateTimer(seconds) {
     const display = document.getElementById('timerDisplay');
     const timerCard = document.getElementById('timerCard');
+    const label = timerCard.querySelector('.timer-label');
 
+    if (seconds === null) {
+        display.textContent = '∞';
+        if (label) label.textContent = '⏱️ Không giới hạn thời gian';
+        timerCard.classList.remove('warning');
+        return;
+    }
+
+    if (label) label.textContent = '⏱️ Thời gian còn lại';
     display.textContent = formatTimeDisplay(seconds);
 
     // Warning state
@@ -260,14 +285,27 @@ function updateTimer(seconds) {
 }
 
 // Handle Approve - Mở máy ngay, KHÔNG giới hạn thời gian
-async function handleApprove() {
-    const requestId = elements.approveBtn.dataset.requestId;
-    const deviceId = elements.approveBtn.dataset.deviceId;
+function handleApprove() {
+    return approveRequest(
+        elements.approveBtn.dataset.requestId,
+        elements.approveBtn.dataset.deviceId
+    );
+}
 
+// Handle Reject
+function handleReject() {
+    return rejectRequest(
+        elements.rejectBtn.dataset.requestId,
+        elements.rejectBtn.dataset.deviceId
+    );
+}
+
+// Tách khỏi handler để nút trên notification cũng gọi được
+async function approveRequest(requestId, deviceId) {
     if (!requestId || !deviceId) return;
 
     try {
-        // Update request status
+        // Update request status - Windows Client đọc rồi tự xóa node này
         await window.dbRef.update(window.dbRef.ref(window.db, `requests/${requestId}`), {
             status: 'approved'
         });
@@ -275,12 +313,12 @@ async function handleApprove() {
         // Unlock device - NO time limit (set to null/unlimited)
         await window.dbRef.update(window.dbRef.ref(window.db, `devices/${deviceId}`), {
             status: 'unlocked',
-            timeRemaining: null  // Không giới hạn thời gian
+            timeRemaining: null,   // Không giới hạn thời gian
+            lockScheduled: null    // Hủy mọi lịch khóa còn treo - nếu không,
+                                   // timestamp quá khứ sẽ khóa lại ngay sau 2 giây
         });
 
         showToast('✅ Đã cho phép mở máy (không giới hạn)', 'success');
-
-        // Send Slack notification
         sendSlackNotification('approved', deviceId);
     } catch (error) {
         console.error('Error approving request:', error);
@@ -288,32 +326,32 @@ async function handleApprove() {
     }
 }
 
-// Handle Reject
-async function handleReject() {
-    const requestId = elements.rejectBtn.dataset.requestId;
-    const deviceId = elements.rejectBtn.dataset.deviceId;
-
+async function rejectRequest(requestId, deviceId) {
     if (!requestId) return;
 
     try {
-        console.log('🚫 Rejecting request:', requestId);
-
-        // Update request status to rejected (để Windows Client biết)
         await window.dbRef.update(window.dbRef.ref(window.db, `requests/${requestId}`), {
             status: 'rejected'
         });
 
-        console.log('✅ Request marked as rejected');
-
         showToast('❌ Đã từ chối yêu cầu', 'success');
-
-        // Send Slack notification
         sendSlackNotification('rejected', deviceId);
     } catch (error) {
         console.error('Error rejecting request:', error);
         showToast('❌ Lỗi: ' + error.message, 'error');
     }
 }
+
+// Bấm nút "Cho phép" / "Từ chối" ngay trên notification của hệ điều hành.
+// Service Worker chuyển sự kiện về đây qua postMessage.
+window.addEventListener('notification-action', (event) => {
+    const { action, requestId, deviceId } = event.detail || {};
+    if (action === 'approve') {
+        approveRequest(requestId, deviceId);
+    } else if (action === 'reject') {
+        rejectRequest(requestId, deviceId);
+    }
+});
 
 // Lock Device với delay options
 async function lockDevice(deviceId, delayMinutes = 0) {
@@ -342,53 +380,34 @@ async function lockDevice(deviceId, delayMinutes = 0) {
     }
 }
 
-// Unlock Device
-async function unlockDevice(deviceId) {
+// Dọn request cũ còn sót trong Firebase.
+//
+// Bình thường Windows client tự xóa request ngay sau khi đọc kết quả duyệt,
+// nên nhánh `requests/` chỉ giữ vài node. Hàm này xử lý phần còn lại: máy con
+// bị tắt/mất mạng giữa chừng, hoặc request từ các phiên bản cũ.
+async function cleanupStaleRequests() {
     try {
-        const device = currentDevices[deviceId];
-        await window.dbRef.update(window.dbRef.ref(window.db, `devices/${deviceId}`), {
-            status: 'unlocked',
-            timeRemaining: device.timeLimit || 7200
+        const snapshot = await window.dbRef.get(window.dbRef.ref(window.db, 'requests'));
+        const data = snapshot.val();
+        if (!data) return;
+
+        const now = Math.floor(Date.now() / 1000);
+        const stale = Object.entries(data).filter(([, req]) => {
+            const age = now - (req.timestamp || 0);
+            const ttl = req.status === 'pending'
+                ? PENDING_REQUEST_TTL_SECONDS
+                : RESOLVED_REQUEST_TTL_SECONDS;
+            return age > ttl;
         });
 
-        showToast('✅ Đã mở khóa máy tính', 'success');
-        closeModal();
+        if (stale.length === 0) return;
+
+        await Promise.all(stale.map(([id]) =>
+            window.dbRef.remove(window.dbRef.ref(window.db, `requests/${id}`))
+        ));
+        console.log(`🗑️ Đã dọn ${stale.length} request cũ`);
     } catch (error) {
-        console.error('Error unlocking device:', error);
-        showToast('❌ Lỗi: ' + error.message, 'error');
-    }
-}
-
-// Add Time
-async function addTime(deviceId, seconds) {
-    try {
-        const device = currentDevices[deviceId];
-        const newTime = (device.timeRemaining || 0) + seconds;
-
-        await window.dbRef.update(window.dbRef.ref(window.db, `devices/${deviceId}`), {
-            timeRemaining: newTime
-        });
-
-        const minutes = seconds / 60;
-        showToast(`⏱️ Đã thêm ${minutes} phút`, 'success');
-    } catch (error) {
-        console.error('Error adding time:', error);
-        showToast('❌ Lỗi: ' + error.message, 'error');
-    }
-}
-
-// Set Time Limit
-async function setTimeLimit(deviceId, seconds) {
-    try {
-        await window.dbRef.update(window.dbRef.ref(window.db, `devices/${deviceId}`), {
-            timeLimit: seconds
-        });
-
-        const hours = seconds / 3600;
-        showToast(`✅ Đã đặt giới hạn: ${hours} giờ/ngày`, 'success');
-    } catch (error) {
-        console.error('Error setting time limit:', error);
-        showToast('❌ Lỗi: ' + error.message, 'error');
+        console.error('Error cleaning up requests:', error);
     }
 }
 
@@ -449,9 +468,16 @@ function getTimeAgo(timestamp) {
     return `${Math.floor(diff / 86400)} ngày trước`;
 }
 
+// Máy con set timeRemaining = null khi mở khóa vô thời hạn; Firebase xóa hẳn
+// key nên giá trị đọc về là undefined.
+function hasTimeLimit(device) {
+    return device.timeRemaining !== null && device.timeRemaining !== undefined;
+}
+
 function isDeviceOnline(lastActive) {
+    if (!lastActive) return false;
     const now = Math.floor(Date.now() / 1000);
-    return (now - lastActive) < 10;
+    return (now - lastActive) < ONLINE_THRESHOLD_SECONDS;
 }
 
 function showToast(message, type = 'success') {

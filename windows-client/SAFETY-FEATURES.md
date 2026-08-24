@@ -11,7 +11,7 @@
 Khi máy bị khóa và webapp không hoạt động:
 
 1. **Bấm tổ hợp phím:** `Ctrl + Shift + Alt + U`
-2. **Nhập password admin:** `admin123` (mặc định)
+2. **Nhập password admin** (mặc định `admin123` - hãy đổi bằng `python set_password.py`)
 3. **Máy sẽ mở khóa ngay lập tức**
 
 ### Thay đổi password:
@@ -59,8 +59,11 @@ Nếu không kết nối được Firebase:
 ### Kịch bản 3: Từ chối request
 ```
 1. Phụ huynh bấm "Từ chối"
-2. Windows Client tự động gửi request mới
-3. Request mới hiện lên Web App ngay lập tức
+2. Màn hình khóa hiện "Phụ huynh đã từ chối. Gửi lại yêu cầu sau 30s..."
+3. Hết đếm ngược, Windows Client tự gửi request mới
+4. Request cũ bị xóa khỏi Firebase (tránh phình nhánh requests/)
+
+Đổi thời gian chờ bằng `REJECT_RETRY_DELAY` trong `config.py`.
 ```
 
 ---
@@ -73,9 +76,21 @@ File `config.py`:
 # ✅ LUÔN BẬT để phòng lỗi
 EMERGENCY_UNLOCK_ENABLED = True
 
-# ⚠️ ĐỔI MẬT KHẨU MẶC ĐỊNH
-EMERGENCY_UNLOCK_PASSWORD = "your_strong_password_here"  # KHÔNG dùng "admin123"
+# Mật khẩu lưu dạng SHA-256 hash, KHÔNG lưu plaintext
+EMERGENCY_UNLOCK_PASSWORD_HASH = "..."
 ```
+
+**Đổi mật khẩu:**
+
+```bash
+cd windows-client
+python set_password.py
+```
+
+Script hỏi mật khẩu mới, tính hash và ghi thẳng vào `config.py`.
+Mật khẩu plaintext không bao giờ được lưu xuống đĩa.
+
+App sẽ in cảnh báo lúc khởi động nếu mật khẩu vẫn là `admin123` mặc định.
 
 **Lưu ý quan trọng:**
 - Password nên dài ít nhất 8 ký tự
@@ -105,7 +120,7 @@ EMERGENCY_UNLOCK_PASSWORD = "your_strong_password_here"  # KHÔNG dùng "admin12
 ## ⚠️ Lưu ý Quan trọng
 
 1. **Luôn bật EMERGENCY_UNLOCK_ENABLED** - đây là cách duy nhất để unlock khi webapp/server lỗi
-2. **Đổi password mặc định** `admin123` thành password mạnh
+2. **Đổi password mặc định** `admin123` bằng `python set_password.py`
 3. **Backup password** ở nơi an toàn (nếu quên sẽ phải khởi động lại máy)
 4. **Test Emergency Unlock** trước khi setup auto-start with Windows
 5. **Giữ bí mật password** - đừng để con biết!

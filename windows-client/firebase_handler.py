@@ -7,6 +7,11 @@ import uuid
 import os
 from datetime import datetime
 from config import FIREBASE_CONFIG, DEVICE_ID_FILE
+from paths import app_path
+
+# device_id.txt phải nằm cạnh ứng dụng và tồn tại lâu dài. Dùng đường dẫn tuyệt
+# đối để không phụ thuộc thư mục làm việc, và để chạy đúng khi đóng gói .exe.
+DEVICE_ID_PATH = app_path(DEVICE_ID_FILE)
 
 
 class FirebaseHandler:
@@ -17,28 +22,57 @@ class FirebaseHandler:
         self.device_path = f"devices/{self.device_id}"
 
     def _get_or_create_device_id(self):
-        """Lấy hoặc tạo Device ID duy nhất"""
-        if os.path.exists(DEVICE_ID_FILE):
-            with open(DEVICE_ID_FILE, 'r') as f:
-                return f.read().strip()
-        else:
-            device_id = str(uuid.uuid4())
-            with open(DEVICE_ID_FILE, 'w') as f:
-                f.write(device_id)
-            return device_id
+        """Lấy hoặc tạo Device ID duy nhất (riêng cho từng máy)"""
+        if os.path.exists(DEVICE_ID_PATH):
+            with open(DEVICE_ID_PATH, 'r') as f:
+                existing = f.read().strip()
+                if existing:
+                    return existing
+        device_id = str(uuid.uuid4())
+        with open(DEVICE_ID_PATH, 'w') as f:
+            f.write(device_id)
+        return device_id
 
     def initialize_device(self):
-        """Khởi tạo thông tin thiết bị trên Firebase"""
-        device_data = {
+        """
+        Đăng ký thiết bị lên Firebase.
+
+        Lần đầu thì tạo node đầy đủ. Các lần khởi động sau chỉ `update()` những
+        field thuộc về client.
+
+        KHÔNG dùng `set()` ở đây: `set()` là thay thế toàn bộ node, nên mỗi lần
+        khởi động sẽ ghi đè `createdAt` (biến nó thành "lần chạy gần nhất"),
+        xóa `lockScheduled` và xóa sạch mọi field do web app thêm vào sau này.
+        """
+        now = self._get_timestamp()
+        device_name = os.environ.get('COMPUTERNAME', 'Unknown')
+
+        # Phải phân biệt "node chưa tồn tại" với "đọc lỗi". get_device_status()
+        # trả None cho cả hai, dùng nó ở đây thì một lần mất mạng lúc khởi động
+        # sẽ rơi vào nhánh set() và xóa sạch node.
+        try:
+            existing = self.db.child(self.device_path).get().val()
+        except Exception as e:
+            print(f"⚠️ Cannot read device node ({e}) - skip initialization")
+            return
+
+        if existing:
+            self.db.child(self.device_path).update({
+                "deviceName": device_name,
+                "lastActive": now,
+            })
+            print(f"Device registered (existing): {self.device_id}")
+            return
+
+        self.db.child(self.device_path).set({
             "status": "locked",
             "timeLimit": 7200,  # 2 giờ mặc định
             "timeRemaining": 0,
-            "lastActive": self._get_timestamp(),
-            "deviceName": os.environ.get('COMPUTERNAME', 'Unknown'),
+            "lastActive": now,
+            "deviceName": device_name,
             "parentId": "",
-            "createdAt": self._get_timestamp()
-        }
-        self.db.child(self.device_path).set(device_data)
+            "createdAt": now
+        })
         print(f"Device initialized with ID: {self.device_id}")
 
     def send_unlock_request(self):
@@ -79,6 +113,57 @@ class FirebaseHandler:
             "timeRemaining": seconds,
             "lastActive": self._get_timestamp()
         })
+
+    def clear_lock_schedule(self):
+        """
+        Xóa `lockScheduled` sau khi lịch khóa đã kích hoạt.
+
+        Một lịch đã chạy phải được "tiêu thụ". Nếu để nguyên, timestamp quá khứ
+        vẫn nằm trong DB và lần mở khóa kế tiếp sẽ bị khóa lại ngay lập tức
+        (check ở main.py:handle_unlocked_state thấy current_time >= lockScheduled).
+        """
+        try:
+            # Firebase xóa hẳn key khi nhận giá trị null
+            self.db.child(self.device_path).update({"lockScheduled": None})
+            return True
+        except Exception as e:
+            print(f"Error clearing lock schedule: {e}")
+            return False
+
+    def send_heartbeat(self):
+        """
+        Cập nhật lastActive để web app biết máy còn online.
+
+        Cần gọi định kỳ kể cả khi mở khóa không giới hạn thời gian - lúc đó
+        không có timer nên update_time_remaining() không bao giờ chạy, khiến
+        lastActive đứng yên và web luôn báo Offline.
+        """
+        try:
+            self.db.child(self.device_path).update({
+                "lastActive": self._get_timestamp()
+            })
+            return True
+        except Exception as e:
+            print(f"Error sending heartbeat: {e}")
+            return False
+
+    def delete_request(self, request_id):
+        """
+        Xóa một request sau khi đã xử lý xong.
+
+        Không dọn thì nhánh `requests/` phình vô hạn: mỗi lần bị từ chối client
+        lại tạo request mới, còn web app load toàn bộ nhánh này mỗi lần có thay
+        đổi nên sẽ chậm dần theo thời gian.
+        """
+        if not request_id:
+            return False
+        try:
+            self.db.child(f"requests/{request_id}").remove()
+            print(f"🗑️ Deleted request: {request_id}")
+            return True
+        except Exception as e:
+            print(f"Error deleting request: {e}")
+            return False
 
     def check_unlock_approved(self, request_id):
         """Kiểm tra yêu cầu mở khóa đã được phê duyệt chưa"""
