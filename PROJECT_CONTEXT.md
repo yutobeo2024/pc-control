@@ -166,8 +166,22 @@ con cái từ xa thông qua Web App trên điện thoại.
 - **Auto-start bản exe:** `setup_autostart_exe.bat` tạo task Scheduler
   `ParentalControlClient` trỏ vào `ParentalControl.exe` **nằm cùng thư mục** với
   nó. Gỡ vẫn dùng chung `remove_autostart.bat`.
-- **⚠️ Chưa từng build** — chưa có `windows-client/dist/`. Xem "Trạng thái hiện
-  tại".
+- **Đã build lần đầu ngày 05/09/2026** — `windows-client/dist/`:
+  `ParentalControl.exe` (78 MB) + `setup_autostart_exe.bat` +
+  `remove_autostart.bat`, copy nguyên cả 3 file sang máy con.
+- **Kiểm tra bundle sau khi build** (lỗi kinh điển: build xong nhưng chạy là
+  `ModuleNotFoundError` vì thiếu hidden import). Đối chiếu
+  `build/ParentalControl/Analysis-00.toc` — phải có `pyrebase`,
+  `Crypto.Cipher.AES`, `gcloud`, `oauth2client`, `jwt`, `requests_toolbelt`,
+  `PyQt5\QtWidgets.pyd`, `config`. 218 dòng "missing module" trong
+  `warn-ParentalControl.txt` là bình thường: shim Python 2 (`urllib.quote`,
+  `StringIO`) và dep tùy chọn (`OpenSSL`, `bcrypt`, `google.appengine`).
+- **Đừng chạy thử exe trên máy đang chạy bản Python** để "kiểm tra nhanh": mutex
+  single-instance nằm ở namespace `Global\`, tiến trình KHÔNG nâng quyền không
+  tạo được (thiếu `SeCreateGlobalPrivilege`) nên `GetLastError()` trả 5 chứ
+  không phải 183 — guard không nhận ra bản đang chạy và app khởi động đầy đủ,
+  bật màn khóa. Muốn thử thì chạy exe **có nâng quyền**: nó thấy mutex đã tồn
+  tại, in thông báo rồi thoát ngay với code 0.
 
 ### 12. Khóa lại khi máy ngủ dậy (mới ở v1.2.1)
 - **Location:** `main.py:check_firebase_updates` (đầu hàm), `config.LOCK_ON_WAKE`
@@ -442,22 +456,27 @@ Chặn được Alt+Tab, phím Windows, Alt+F4, Ctrl+Esc (`input_blocker.py`) nh
 
 ---
 
-## Trạng Thái Hiện Tại (cập nhật 24/08/2026)
+## Trạng Thái Hiện Tại (cập nhật 05/09/2026)
 
 ### Đã có hiệu lực
 
 | Hạng mục | Bằng chứng |
 |---|---|
-| **Firebase Rules đã publish** | `python firebase/verify-rules.py` → **8/8** (kiểm ngày 24/08/2026). Người ngoài không liệt kê được `devices`/`requests`, root đóng; client không đăng nhập vẫn đọc/ghi được node của nó |
-| **Windows client trên máy dev chạy code mới** | Task `ParentalControlClient` đang Running, tiến trình `pythonw.exe` khởi động 24/08/2026 09:30 — sau mọi lần sửa `.py` (mới nhất 23/08 11:24) |
+| **Firebase Rules đã publish** | `python firebase/verify-rules.py` → **8/8** (kiểm 24/08/2026) |
+| **Máy dev `PT-GROUP-4` chạy code mới** | Task `ParentalControlClient` Running, `pythonw.exe` khởi động lại 05/09 sau mọi lần sửa `.py`. Chạy từ **mã nguồn**, không phải exe |
+| **Đã build `.exe`** | `windows-client/dist/ParentalControl.exe` 78 MB, build 05/09/2026, bundle đã đối chiếu (xem mục 11) |
+| **Máy con thứ hai đã cài** | Chạy exe, tự sinh `device_id.txt`, đăng ký lên Firebase, màn khóa hiện đúng |
+| **Web app đã deploy** | Netlify site `yutokun` nối GitHub, production branch `master`, auto-deploy mỗi lần push |
+| **Repo public, `master` = dòng v1.2** | `01e4617` "FANCY PC CONTROL v2.0" là nhánh thử nghiệm bỏ dở (trỏ Firebase project khác `fancy-pc-11159`, không có bản vá nào của v1.2.1→v1.2.4). Đã khép bằng merge `-s ours`; xem lại ở tag **`v2.0-abandoned`** |
 
-### Còn treo
+### Còn treo — rủi ro đã biết, chủ dự án chấp nhận tạm thời
 
 | # | Việc | Chi tiết |
 |---|---|---|
-| 1 | **Web app chưa deploy** | Netlify (`yutokun.netlify.app`) vẫn là bản cũ: `sw.js` trả **404**, `app.js` 18.590 bytes so với 20.451 bytes ở local. Nghĩa là notification có nút bấm, query pending và `cleanupStaleRequests` **chưa chạy thật**. Deploy lại thư mục `web-app/public/` lên Netlify, rồi tải lại trang trên điện thoại để Service Worker đăng ký |
-| 2 | **Chưa build `.exe`** | Hạ tầng đóng gói đã viết xong nhưng chưa chạy lần nào (`windows-client/dist/` chưa tồn tại). Chỉ cần khi mang sang máy con **không cài Python** — máy dev không cần |
-| 3 | **Chưa commit** | 22 file sửa + 12 file mới + xóa `mobile-app/` vẫn nằm ở working tree. Commit cuối cùng là `9c33f6d` (v1.1) |
+| 1 | **Mật khẩu khẩn cấp vẫn là `admin123`** | `is_default_password()` → `True`. Repo nay **public**, mà chuỗi này nằm rõ trong `PROJECT_CONTEXT.md`, `QUICKSTART.md`, `SAFETY-FEATURES.md`, `config.example.py`. Ai tìm ra repo là mở khóa được mọi máy con. Sửa: `python set_password.py` → `build-exe.bat` → copy exe mới đè lên máy con (**giữ `device_id.txt`**) |
+| 2 | **Rules cho `auth == null` GHI vào `devices/$deviceId`** | Trẻ đọc `device_id.txt` nằm ngay cạnh exe, cộng `databaseURL` công khai trong `index.html`, là mở khóa được bằng một request HTTP. Xem "Bugs CHƯA Sửa" mục 1 |
+| 3 | **Slack chưa cấu hình** | `windows-client/slack_webhook.txt` không tồn tại trên cả máy dev lẫn máy con → mọi `send_*()` trả `False` và in "Slack webhook not configured". Không có thông báo nào được gửi |
+| 4 | **Auto-start trên máy con** | Kiểm bằng `schtasks /query /tn ParentalControlClient`. Chưa chạy `setup_autostart_exe.bat` (Run as administrator) thì app chỉ chạy khi nháy đúp thủ công — khởi động lại máy là hệ thống coi như tắt |
 
 ---
 
@@ -500,8 +519,18 @@ cd web-app
 run-local.bat     # http://localhost:8000
 ```
 
-Deploy: kéo `web-app/public/` vào Netlify, rồi thêm domain vào
-Firebase Console → Authentication → Settings → Authorized domains.
+Deploy: **tự động**. Netlify site `yutokun` đã nối với GitHub, production branch
+`master` — push lên `master` là deploy. Không phải kéo thả, không phải chạy
+`netlify-deploy.bat` nữa.
+
+`netlify.toml` ở **gốc repo** khai `base = "web-app"`, `publish = "public"`.
+Netlify chỉ đọc `netlify.toml` ở gốc; thiếu file này thì nó đi tìm `public/` ở
+gốc repo, không thấy, và deploy ra site rỗng. `web-app/netlify.toml` giữ nguyên
+để `netlify deploy --dir=public` thủ công vẫn chạy được; hai file khai trùng
+nhau nên không mâu thuẫn.
+
+Domain phải có trong Firebase Console → Authentication → Settings →
+Authorized domains.
 
 > Service Worker cần HTTPS hoặc `localhost`. Mở web app qua
 > `http://<tên-máy>:8000` từ điện thoại sẽ không đăng ký được SW → notification
@@ -534,6 +563,7 @@ Firebase Console → Authentication → Settings → Authorized domains.
 
 ```
 d:\yuto control\
+├── netlify.toml                # base = "web-app" - Netlify chỉ đọc file ở GỐC
 ├── web-app/
 │   ├── public/
 │   │   ├── index.html          # UI + Firebase init + Google Auth
@@ -565,7 +595,13 @@ d:\yuto control\
 │   ├── START.bat / run.bat / run-debug.bat
 │   ├── setup_autostart.bat / remove_autostart.bat
 │   ├── SAFETY-FEATURES.md
-│   └── AUTO-START-GUIDE.md
+│   ├── AUTO-START-GUIDE.md
+│   ├── device_id.txt           # ID riêng từng máy (gitignored, ĐỪNG copy sang máy khác)
+│   ├── build/                  # Trung gian PyInstaller (gitignored)
+│   └── dist/                   # Kết quả build (gitignored) - copy CẢ 3 file sang máy con
+│       ├── ParentalControl.exe
+│       ├── setup_autostart_exe.bat
+│       └── remove_autostart.bat
 ├── firebase/
 │   ├── database.rules.json     # Security Rules (nguồn duy nhất)
 │   ├── verify-rules.py        # Kiểm chứng rules đã publish đúng chưa
