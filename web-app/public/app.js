@@ -215,11 +215,26 @@ function openDeviceModal(deviceId) {
                 lockDevice(deviceId, delayMinutes);
             };
         });
+
+        const cancelBtn = document.getElementById('cancelScheduleBtn');
+        cancelBtn.onclick = () => cancelSchedule(deviceId);
     } else {
         lockSection.classList.add('hidden');
     }
 
+    renderScheduleControls(device);
     elements.deviceModal.classList.remove('hidden');
+}
+
+// Hiện nút "Hủy lịch khóa" khi và chỉ khi có gì để hủy. Gọi lại mỗi giây cùng
+// với đồng hồ, vì phụ huynh có thể vừa bấm "Sau 30 phút" xong đổi ý ngay.
+function renderScheduleControls(device) {
+    const cancelBtn = document.getElementById('cancelScheduleBtn');
+    if (!cancelBtn) return;
+
+    const hasSchedule = device.status === 'unlocked' &&
+        (hasTimeLimit(device) || !!device.lockScheduled);
+    cancelBtn.classList.toggle('hidden', !hasSchedule);
 }
 
 // Cập nhật chỉ báo Online/Offline (gọi lại mỗi giây khi modal đang mở)
@@ -249,6 +264,7 @@ function startTimerUpdates(deviceId) {
         if (device) {
             updateTimer(hasTimeLimit(device) ? device.timeRemaining : null);
             renderOnlineStatus(device);
+            renderScheduleControls(device);
         }
     }, 1000);
 }
@@ -376,6 +392,26 @@ async function lockDevice(deviceId, delayMinutes = 0) {
         closeModal();
     } catch (error) {
         console.error('Error locking device:', error);
+        showToast('❌ Lỗi: ' + error.message, 'error');
+    }
+}
+
+// Hủy lịch khóa / giới hạn thời gian, máy vẫn đang mở.
+//
+// Phải xóa CẢ HAI: lockScheduled là mốc giờ, timeRemaining là đồng hồ đếm ngược
+// chạy độc lập bên máy con - còn sót cái nào thì máy vẫn khóa đúng giờ cũ.
+// Không đụng tới `status`: máy đang mở thì cứ để mở.
+async function cancelSchedule(deviceId) {
+    if (!deviceId) return;
+
+    try {
+        await window.dbRef.update(window.dbRef.ref(window.db, `devices/${deviceId}`), {
+            lockScheduled: null,
+            timeRemaining: null
+        });
+        showToast('✅ Đã hủy lịch khóa - máy không giới hạn thời gian', 'success');
+    } catch (error) {
+        console.error('Error cancelling schedule:', error);
         showToast('❌ Lỗi: ' + error.message, 'error');
     }
 }

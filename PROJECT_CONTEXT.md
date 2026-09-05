@@ -337,6 +337,8 @@ Security Rules. **Nguồn duy nhất** — đừng chép rules từ file .md nà
 | 15 | `reason` thêm ở bug 13 chưa được truyền tại 2 chỗ gọi trong `handle_unlocked_state` → khóa theo lịch và khóa từ xa vẫn báo "Đã hết giờ" | Truyền `"Đã đến giờ khóa theo lịch"` / `"Phụ huynh khóa từ xa"` |
 | 16 | **Hộp thoại "Còn 10 phút!" nằm lì giữa màn hình, không tắt được.** `QTimer.singleShot(5000, self.close)` đặt trong `WarningDialog.init_ui`, mà `main.py:show_warning` giữ lại một instance cho cả vòng đời app → chỉ lần cảnh báo ĐẦU TIÊN tự đóng, từ lần thứ hai trở đi hộp thoại frameless không nút X đứng vĩnh viễn | `QTimer` có `start()` lại, đếm từ lúc `show_warning()` chứ không phải lúc khởi tạo. Kèm: bấm vào là đóng, `Qt.Tool` + `WA_ShowWithoutActivating` để không cướp focus |
 | 17 | `set_time()` đặt cứng `warning_triggered = False`, mà `handle_unlocked_state` gọi `set_time()` mỗi lần lệch >5s với Firebase → cảnh báo bắn lại nhiều lần. Cho hẳn 10 phút thì bật "còn 10 phút" ngay giây đầu | `warning_triggered = seconds <= WARNING_TIME` — dưới ngưỡng thì coi như đã cảnh báo |
+| 18 | Không có đường nào hủy lịch khóa đang chạy. Kể cả khi web ghi `timeRemaining = null`, client gặp `if remote_time is None: return` rồi bỏ qua — `QTimer` vẫn đếm tới 0 và vẫn khóa | Client dừng hẳn đồng hồ ở nhánh đó; web thêm nút "Hủy lịch khóa" xóa cả `lockScheduled` lẫn `timeRemaining` |
+| 19 | **Đồng hồ đếm ngược chạy ngầm không hiện.** `stop()` vừa dừng vừa `hide()`, nhưng nhánh đồng bộ chỉ gọi `set_time()` (khởi động lại QTimer, không `show()`) → sau lần khóa đầu tiên, mọi lần cấp giờ tiếp theo đều đếm ngược vô hình rồi khóa máy không báo trước | `set_time()` tự `show()` lại |
 
 ### Dọn dẹp kèm theo
 - Xóa `mobile-app/` (Flutter dở dang, thiếu `android/` và `ios/` nên không build được)
@@ -585,6 +587,22 @@ d:\yuto control\
 ---
 
 ## Changelog
+
+### v1.2.3 (2026-09-05) - Hủy lịch khóa
+- ✨ Nút **"Hủy lịch khóa"** trên trang thiết bị, chỉ hiện khi máy đang mở và có
+  lịch/giới hạn để hủy. Xóa cả `lockScheduled` lẫn `timeRemaining` — sót cái nào
+  thì máy vẫn khóa đúng giờ cũ
+- 🐛 Client dừng hẳn đồng hồ khi `timeRemaining` về `null`. Trước đây
+  `handle_unlocked_state` `return` sớm, `QTimer` vẫn đếm tới 0 và vẫn khóa
+- 🐛 Đồng hồ đếm ngược không còn chạy ngầm vô hình sau lần khóa đầu tiên
+  (`set_time()` tự `show()` lại)
+
+**Đã kiểm chứng (client):** cấp 240s → đúng một cửa sổ 200x100 hiện ở góc phải;
+ghi `timeRemaining = null` → cửa sổ biến mất sau 2 giây, máy không khóa.
+**Chưa kiểm chứng (web):** nút mới cần deploy Netlify và đăng nhập bằng tài
+khoản phụ huynh mới bấm thử được.
+
+**Files sửa:** `main.py`, `timer_widget.py`, `web-app/public/{index.html,app.js,styles.css}`
 
 ### v1.2.2 (2026-09-05) - Lịch khóa miễn nhiễm lệch đồng hồ
 - 🐛 "Khóa sau 30 phút / 1 giờ / 1.5 giờ / 2 giờ / 3 giờ" không còn phụ thuộc

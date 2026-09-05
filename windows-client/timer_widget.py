@@ -92,6 +92,15 @@ class TimerWidget(QWidget):
         self.update_display()
         if not self.countdown_timer.isActive():
             self.countdown_timer.start(1000)
+        # stop() vừa dừng đồng hồ vừa hide(). Nhánh đồng bộ trong
+        # handle_unlocked_state chỉ gọi set_time(), nên nếu không show() ở đây
+        # thì sau lần khóa đầu tiên mọi lần cấp giờ tiếp theo đều đếm ngược vô
+        # hình - trẻ không thấy còn bao nhiêu phút, máy khóa không báo trước.
+        self.show()
+
+    def is_counting(self):
+        """Đồng hồ có đang chạy không (dùng thay cho việc chọc vào QTimer)"""
+        return self.countdown_timer.isActive()
 
     def stop(self):
         """Dừng đếm ngược. Gọi khi khóa máy - hide() không dừng QTimer."""

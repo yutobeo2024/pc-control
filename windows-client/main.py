@@ -464,6 +464,12 @@ class ParentalControlApp:
 
         # timeRemaining = None nghĩa là mở khóa không giới hạn thời gian
         if remote_time is None:
+            # Phụ huynh vừa hủy lịch/giới hạn. Chỉ `return` là chưa đủ: QTimer
+            # trong TimerWidget vẫn chạy tiếp tới 0 rồi khóa máy, nút "Hủy lịch
+            # khóa" trên web thành vô nghĩa.
+            if self.timer_widget and self.timer_widget.is_counting():
+                print("Da huy gioi han thoi gian - dung dong ho dem nguoc")
+                self.timer_widget.stop()
             return
 
         if not self.timer_widget:
