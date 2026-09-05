@@ -140,21 +140,25 @@ class SlackNotifier:
             print(f"Error sending warning: {e}")
             return False
 
-    def send_time_expired(self, device_name):
+    def send_time_expired(self, device_name, reason="Đã hết giờ"):
         """
-        Gửi thông báo khi hết giờ
+        Gửi thông báo khi máy bị khóa tự động.
+
+        `reason` cho biết vì sao khóa - hết giờ, đến lịch khóa, hay máy vừa
+        ngủ dậy. Trước đây luôn ghi "hết giờ" nên phụ huynh đọc Slack bị
+        hiểu nhầm.
         """
         if not self.webhook_url:
             return False
 
         message = {
-            "text": f"🔒 {device_name} - Đã hết giờ và bị khóa",
+            "text": f"🔒 {device_name} - {reason} và bị khóa",
             "blocks": [
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"🔒 *{device_name}*\nĐã hết giờ và bị khóa tự động"
+                        "text": f"🔒 *{device_name}*\n{reason} và bị khóa tự động"
                     }
                 }
             ]

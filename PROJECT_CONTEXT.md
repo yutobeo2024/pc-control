@@ -169,6 +169,25 @@ con cái từ xa thông qua Web App trên điện thoại.
 - **⚠️ Chưa từng build** — chưa có `windows-client/dist/`. Xem "Trạng thái hiện
   tại".
 
+### 12. Khóa lại khi máy ngủ dậy (mới ở v1.2.1)
+- **Location:** `main.py:check_firebase_updates` (đầu hàm), `config.LOCK_ON_WAKE`
+- **Vấn đề:** "khóa khi mở máy" không phải logic riêng — nó chỉ là hệ quả của
+  việc tiến trình khởi động lại (`__init__` đặt `is_locked = True`). Task
+  Scheduler chỉ có `LogonTrigger`, mà sleep không sinh logon event. Nên **cho
+  máy ngủ thay vì tắt là đi vòng qua toàn bộ hệ thống** — không cần Task
+  Manager, không cần mật khẩu.
+- **Cách phát hiện:** vòng lặp polling chạy mỗi 2 giây; `QTimer` không tick khi
+  máy ngủ, nên khoảng cách giữa hai lần chạy nhảy vọt = vừa ngủ dậy.
+- **Dùng `time.time()` chứ KHÔNG dùng `time.monotonic()`:** trên Windows
+  monotonic không tính thời gian máy nằm trong sleep/hibernate, dùng nó thì ngủ
+  bao lâu cũng không phát hiện ra.
+- **Đặt TRƯỚC mọi lệnh gọi Firebase:** lúc vừa thức dậy card mạng thường chưa
+  kết nối lại; nếu để sau, `get_device_status()` lỗi rồi `return` sớm và máy
+  không bao giờ bị khóa.
+- **Hệ quả được vá kèm:** đồng hồ đếm ngược cũng đứng yên trong lúc ngủ (QTimer
+  không chạy, mà `timeRemaining` do chính client ghi lên Firebase) — ngủ 3 tiếng
+  không bị trừ phút nào. Giờ ngủ dậy là khóa nên thời gian còn lại hết ý nghĩa.
+
 ---
 
 ## Code Locations Quan Trọng
@@ -262,6 +281,9 @@ EMERGENCY_UNLOCK_PASSWORD = ""                # fallback plaintext (cấu hình 
 BLOCK_SYSTEM_HOTKEYS = True
 SINGLE_INSTANCE = True
 REQUIRE_PASSWORD_TO_EXIT = True
+
+LOCK_ON_WAKE = True         # ngủ dậy thì khóa lại, coi như vừa bật máy
+SLEEP_DETECT_SECONDS = 60   # giây - ngủ lâu hơn ngần này mới khóa
 ```
 
 > Khi đóng gói `.exe`, `config.py` được **nhúng thẳng vào file exe**. Cấu hình
@@ -288,6 +310,10 @@ Security Rules. **Nguồn duy nhất** — đừng chép rules từ file .md nà
 | 2b | Lịch khóa và timer đếm ngược cùng bắn `on_time_expired()` cách nhau 1-2 giây → hai lock screen, hai unlock request | Guard `if self.is_locked: return` + `TimerWidget.stop()` dừng hẳn QTimer (trước chỉ `hide()`) |
 | 3 | `initialize_device()` dùng `.set()` → mỗi lần khởi động ghi đè `createdAt`, xóa `lockScheduled` và mọi field web app thêm vào | `.update()` khi node đã tồn tại, `.set()` chỉ khi tạo mới; phân biệt "chưa tồn tại" với "đọc lỗi" để mất mạng không gây xóa node |
 | 1 | Rules cho phép `auth == null` đọc/ghi ở mức collection → ai cũng liệt kê & xóa sạch database | Bỏ `auth == null` ở mức collection, chỉ giữ ở `$deviceId` / `$requestId`. Kèm `firebase/verify-rules.py` để kiểm chứng |
+| 10 | **Cho máy ngủ thay vì tắt = không bao giờ bị khóa.** Tiến trình không khởi động lại, Task Scheduler chỉ có `LogonTrigger` | Phát hiện bước nhảy thời gian ở đầu vòng lặp polling → khóa lại (`LOCK_ON_WAKE`) |
+| 11 | `update_status`, `update_time_remaining`, `send_unlock_request` không có `try/except`. Mất mạng đúng lúc khóa → exception trong slot Qt → PyQt gọi `qFatal` giết cả app, để lại máy **không khóa** | Bọc `try/except`, trả `None`/`False` thay vì ném |
+| 12 | Gửi yêu cầu mở khóa thất bại vì mạng → `current_request_id = None` và không có hẹn gửi lại → `handle_locked_state` đứng im, phụ huynh không thấy yêu cầu nào | Hẹn gửi lại sau `REQUEST_RETRY_DELAY` (5s) ở cả 3 nhánh gửi request |
+| 13 | Slack luôn báo "Đã hết giờ và bị khóa" kể cả khi khóa vì lý do khác | `on_time_expired(reason=...)` truyền lý do xuống `send_time_expired` |
 
 ### Dọn dẹp kèm theo
 - Xóa `mobile-app/` (Flutter dở dang, thiếu `android/` và `ios/` nên không build được)
@@ -536,6 +562,18 @@ d:\yuto control\
 ---
 
 ## Changelog
+
+### v1.2.1 (2026-08-24) - Khóa khi máy ngủ dậy
+- 🔒 Phát hiện máy vừa ngủ dậy (sleep/hibernate) và khóa lại — bịt đường đi vòng
+  "cho ngủ thay vì tắt máy". Tùy chọn `LOCK_ON_WAKE` / `SLEEP_DETECT_SECONDS`
+- 🐛 `update_status` / `update_time_remaining` / `send_unlock_request` chịu được
+  lỗi mạng — trước đây mất mạng đúng lúc khóa có thể giết cả app và để máy mở
+- 🐛 Hẹn gửi lại yêu cầu mở khóa khi gửi thất bại, không còn kẹt ở trạng thái
+  khóa mà không có yêu cầu nào chờ duyệt
+- 💬 Thông báo Slack ghi đúng lý do khóa thay vì luôn ghi "hết giờ"
+
+**Files sửa:** `main.py`, `firebase_handler.py`, `slack_notifier.py`,
+`config.py`, `config.example.py`
 
 ### v1.2 (2026-08-23) - Cleanup & Bug Fixes
 - 🔒 Siết Firebase Rules: bỏ `auth == null` ở mức collection

@@ -85,7 +85,13 @@ class FirebaseHandler:
             "status": "pending",
             "deviceName": os.environ.get('COMPUTERNAME', 'Unknown')
         }
-        self.db.child(f"requests/{request_id}").set(request_data)
+        try:
+            self.db.child(f"requests/{request_id}").set(request_data)
+        except Exception as e:
+            # Hay xảy ra ngay sau khi máy ngủ dậy: card mạng chưa kết nối lại.
+            # Trả None để main.py biết mà hẹn gửi lại.
+            print(f"Error sending unlock request: {e}")
+            return None
         print(f"Unlock request sent: {request_id}")
         return request_id
 
@@ -101,18 +107,36 @@ class FirebaseHandler:
             return None
 
     def update_status(self, status):
-        """Cập nhật trạng thái thiết bị"""
-        self.db.child(self.device_path).update({
-            "status": status,
-            "lastActive": self._get_timestamp()
-        })
+        """
+        Cập nhật trạng thái thiết bị.
+
+        Ném exception ở đây là chết người: hàm này nằm giữa đường khóa máy
+        (on_time_expired -> update_status -> show_lock_screen). Exception không
+        bắt trong một slot của Qt sẽ làm PyQt gọi qFatal và giết cả app, để lại
+        máy KHÔNG khóa. Nuốt lỗi và vẫn khóa là lựa chọn an toàn hơn - trạng
+        thái trên Firebase sẽ được heartbeat đồng bộ lại khi mạng có lại.
+        """
+        try:
+            self.db.child(self.device_path).update({
+                "status": status,
+                "lastActive": self._get_timestamp()
+            })
+            return True
+        except Exception as e:
+            print(f"Error updating status: {e}")
+            return False
 
     def update_time_remaining(self, seconds):
         """Cập nhật thời gian còn lại"""
-        self.db.child(self.device_path).update({
-            "timeRemaining": seconds,
-            "lastActive": self._get_timestamp()
-        })
+        try:
+            self.db.child(self.device_path).update({
+                "timeRemaining": seconds,
+                "lastActive": self._get_timestamp()
+            })
+            return True
+        except Exception as e:
+            print(f"Error updating time remaining: {e}")
+            return False
 
     def clear_lock_schedule(self):
         """

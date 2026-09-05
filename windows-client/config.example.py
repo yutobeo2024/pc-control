@@ -51,3 +51,13 @@ SINGLE_INSTANCE = True
 
 # Yêu cầu mật khẩu emergency khi thoát app từ system tray
 REQUIRE_PASSWORD_TO_EXIT = True
+
+# ------------------------------------------------------- Khóa khi ngủ dậy --
+# Cho máy ngủ (sleep/hibernate) thay vì tắt là cách đi vòng qua hệ thống: tiến
+# trình không khởi động lại nên không có gì khóa máy. Bật tùy chọn này để coi
+# "ngủ dậy" tương đương "bật máy" - phải xin phép lại.
+LOCK_ON_WAKE = True
+
+# Ngủ lâu hơn ngần này (giây) thì khóa. 60 = 1 phút, đủ để bỏ qua các lần màn
+# hình tắt tạm vài giây mà không phiền.
+SLEEP_DETECT_SECONDS = 60

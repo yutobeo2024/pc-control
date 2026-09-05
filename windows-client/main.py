@@ -37,6 +37,11 @@ REJECT_RETRY_DELAY = getattr(config, "REJECT_RETRY_DELAY", 30)
 BLOCK_SYSTEM_HOTKEYS = getattr(config, "BLOCK_SYSTEM_HOTKEYS", True)
 SINGLE_INSTANCE = getattr(config, "SINGLE_INSTANCE", True)
 REQUIRE_PASSWORD_TO_EXIT = getattr(config, "REQUIRE_PASSWORD_TO_EXIT", True)
+LOCK_ON_WAKE = getattr(config, "LOCK_ON_WAKE", True)
+SLEEP_DETECT_SECONDS = getattr(config, "SLEEP_DETECT_SECONDS", 60)
+
+# Giây chờ trước khi gửi lại yêu cầu mở khóa khi lần gửi trước thất bại vì mạng
+REQUEST_RETRY_DELAY = 5
 
 # Số lần liên tiếp đọc không thấy request thì mới coi là mất, tránh gửi lại
 # yêu cầu chỉ vì một lần lỗi mạng
@@ -44,6 +49,15 @@ MISSING_REQUEST_THRESHOLD = 3
 
 # Web App URL
 WEB_APP_URL = "https://yutokun.netlify.app"
+
+
+def format_duration(seconds):
+    """Đổi số giây thành chuỗi người đọc được, cho log và thông báo Slack"""
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes} phút"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} tiếng" + (f" {minutes} phút" if minutes else "")
 
 
 class ParentalControlApp:
@@ -71,6 +85,11 @@ class ParentalControlApp:
         self.reject_retry_at = None      # thời điểm được phép gửi lại yêu cầu
         self.missing_request_count = 0
         self.last_heartbeat = 0.0
+        # Mốc lần cuối vòng lặp polling chạy, dùng để phát hiện máy vừa ngủ dậy.
+        # Phải là time.time() (đồng hồ treo tường): trên Windows time.monotonic()
+        # không tính khoảng thời gian máy nằm trong sleep/hibernate, dùng nó thì
+        # ngủ bao lâu cũng không phát hiện được.
+        self.last_check_at = time.time()
 
         # Khởi tạo UI components
         self.lock_screen = None
@@ -147,6 +166,12 @@ class ParentalControlApp:
 
         # Gửi yêu cầu mở khóa
         self.current_request_id = self.firebase.send_unlock_request()
+        if self.current_request_id is None:
+            # Mất mạng đúng lúc khóa - rất hay gặp ngay sau khi máy ngủ dậy.
+            # Không hẹn gửi lại thì handle_locked_state đứng im vĩnh viễn vì
+            # không có request nào để theo dõi, phụ huynh không thấy yêu cầu nào.
+            print(f"Khong gui duoc yeu cau - thu lai sau {REQUEST_RETRY_DELAY}s")
+            self.reject_retry_at = time.monotonic() + REQUEST_RETRY_DELAY
         self.firebase.update_status("pending")
 
         # Gửi thông báo Slack
@@ -223,15 +248,19 @@ class ParentalControlApp:
                 self.timer_widget.set_time(time_remaining)
                 self.timer_widget.show()
 
-    def on_time_expired(self):
-        """Xử lý khi hết thời gian / nhận lệnh khóa"""
+    def on_time_expired(self, reason="Đã hết giờ"):
+        """
+        Khóa máy. Gọi từ nhiều nguồn: hết giờ đếm ngược, tới lịch lockScheduled,
+        lệnh khóa từ web, và phát hiện máy vừa ngủ dậy. `reason` chỉ để log và
+        báo Slack cho đúng, không đổi hành vi.
+        """
         # Đã khóa rồi thì bỏ qua. Lịch khóa và timer đếm ngược là hai nguồn độc
         # lập cùng trỏ tới đây và thường nổ cách nhau 1-2 giây, không chặn thì
         # sinh ra hai màn hình khóa và hai unlock request.
         if self.is_locked:
             return
 
-        print("Time expired! Locking computer...")
+        print(f"{reason} - dang khoa may...")
 
         # Dừng timer trước khi khóa, nếu không nó vẫn đếm ngầm sau khi bị ẩn
         # và bắn time_expired thêm một lần nữa.
@@ -246,7 +275,7 @@ class ParentalControlApp:
 
         # Gửi thông báo Slack
         device_name = os.environ.get('COMPUTERNAME', 'Unknown')
-        self.slack.send_time_expired(device_name)
+        self.slack.send_time_expired(device_name, reason)
 
         self.show_lock_screen()
         self.warning_sent = False
@@ -343,10 +372,14 @@ class ParentalControlApp:
         # Đang trong thời gian chờ sau khi bị từ chối
         if self.current_request_id is None:
             if self.reject_retry_at and time.monotonic() >= self.reject_retry_at:
-                print("Retrying unlock request after rejection...")
+                print("Retrying unlock request...")
                 self.reject_retry_at = None
                 self.current_request_id = self.firebase.send_unlock_request()
-                if self.lock_screen:
+                if self.current_request_id is None:
+                    # Vẫn chưa gửi được (mạng chưa lên) - hẹn tiếp, đừng để rơi
+                    # vào trạng thái khóa mà không có yêu cầu nào chờ duyệt
+                    self.reject_retry_at = time.monotonic() + REQUEST_RETRY_DELAY
+                elif self.lock_screen:
                     self.lock_screen.reset_message()
             return
 
@@ -377,6 +410,8 @@ class ParentalControlApp:
                 print("Request missing - sending a new one")
                 self.missing_request_count = 0
                 self.current_request_id = self.firebase.send_unlock_request()
+                if self.current_request_id is None:
+                    self.reject_retry_at = time.monotonic() + REQUEST_RETRY_DELAY
 
         else:
             self.missing_request_count = 0
@@ -426,6 +461,28 @@ class ParentalControlApp:
     def check_firebase_updates(self):
         """Kiểm tra cập nhật từ Firebase"""
         if not self.is_running:
+            return
+
+        # ---- Phát hiện máy vừa ngủ dậy ----
+        # Hàm này chạy mỗi CHECK_INTERVAL (2 giây). QTimer không tick khi máy
+        # ngủ, nên một bước nhảy hàng chục giây chỉ có thể là sleep/hibernate.
+        #
+        # Vì sao cần: "khóa khi mở máy" không phải logic riêng, nó chỉ là hệ quả
+        # của việc tiến trình khởi động lại (__init__ đặt is_locked = True).
+        # Sleep không kết thúc tiến trình, Task Scheduler cũng chỉ có trigger
+        # logon - nên ngủ rồi thức dậy là đi vòng qua toàn bộ hệ thống.
+        #
+        # Kiểm tra này phải nằm TRƯỚC mọi lệnh gọi Firebase: lúc vừa thức dậy
+        # card mạng thường chưa kết nối lại, đọc Firebase sẽ lỗi và return sớm,
+        # máy sẽ không bao giờ bị khóa.
+        now = time.time()
+        gap = now - self.last_check_at
+        self.last_check_at = now
+
+        if LOCK_ON_WAKE and gap > SLEEP_DETECT_SECONDS and not self.is_locked:
+            reason = f"Máy vừa ngủ dậy sau {format_duration(gap)}"
+            print(f"{reason} - khóa lại")
+            self.on_time_expired(reason=reason)
             return
 
         # Heartbeat chạy trước và độc lập với mọi nhánh logic bên dưới
