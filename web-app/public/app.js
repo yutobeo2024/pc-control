@@ -112,6 +112,18 @@ function renderPendingRequests() {
     elements.requestDeviceName.textContent = deviceName;
     elements.requestTime.textContent = getTimeAgo(request.timestamp);
 
+    // Thẻ này chỉ hiện được MỘT yêu cầu. Không nói ra thì các máy còn lại trông
+    // như không gửi yêu cầu gì - phụ huynh thấy máy bị khóa mà tưởng hỏng.
+    // Duyệt/từ chối cái đang hiện thì cái tiếp theo tự lên.
+    const queue = document.getElementById('requestQueue');
+    if (queue) {
+        const others = pendingList.length - 1;
+        queue.textContent = others > 0
+            ? `+${others} yêu cầu khác đang chờ — hoặc mở khóa thẳng ở mục Thiết bị`
+            : '';
+        queue.classList.toggle('hidden', others === 0);
+    }
+
     // Send notification for new request
     if (window.notificationManager && window.notificationManager.isActive) {
         window.notificationManager.showUnlockRequest(deviceName, request.deviceId, requestId);
@@ -201,6 +213,20 @@ function openDeviceModal(deviceId) {
     } else {
         timerCard.classList.add('hidden');
         stopTimerUpdates();
+    }
+
+    // Nút mở khóa - hiển thị khi máy đang khóa.
+    //
+    // Trước đây trang thiết bị chỉ có nút KHÓA, đường mở khóa duy nhất là thẻ
+    // "Yêu cầu mở máy" ở đầu trang. Mà thẻ đó chỉ hiện MỘT yêu cầu cũ nhất, nên
+    // một yêu cầu pending cũ của máy khác là đủ để che yêu cầu của máy đang
+    // khóa - phụ huynh nhìn thấy máy bị khóa mà không có chỗ nào mở.
+    const unlockSection = document.querySelector('.unlock-section');
+    if (isUnlocked) {
+        unlockSection.classList.add('hidden');
+    } else {
+        unlockSection.classList.remove('hidden');
+        document.getElementById('unlockNowBtn').onclick = () => unlockDevice(deviceId);
     }
 
     // Lock buttons - hiển thị khi máy đang mở
@@ -392,6 +418,28 @@ async function lockDevice(deviceId, delayMinutes = 0) {
         closeModal();
     } catch (error) {
         console.error('Error locking device:', error);
+        showToast('❌ Lỗi: ' + error.message, 'error');
+    }
+}
+
+// Mở khóa thẳng từ trang thiết bị, không cần đi qua thẻ yêu cầu.
+//
+// Không cần đụng tới `requests/`: máy con thấy status = 'unlocked' là tự xóa
+// request của nó (main.py:handle_locked_state).
+async function unlockDevice(deviceId) {
+    if (!deviceId) return;
+
+    try {
+        await window.dbRef.update(window.dbRef.ref(window.db, `devices/${deviceId}`), {
+            status: 'unlocked',
+            timeRemaining: null,
+            lockScheduled: null
+        });
+        showToast('✅ Đã mở khóa máy tính', 'success');
+        sendSlackNotification('approved', deviceId);
+        closeModal();
+    } catch (error) {
+        console.error('Error unlocking device:', error);
         showToast('❌ Lỗi: ' + error.message, 'error');
     }
 }

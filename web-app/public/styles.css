@@ -172,6 +172,12 @@ body {
     opacity: 0.9;
 }
 
+.request-queue {
+    margin-top: 6px;
+    font-size: 13px;
+    opacity: 0.85;
+}
+
 .action-buttons {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -500,6 +506,22 @@ body {
 }
 
 /* Chỉ hiện khi máy đang có lịch khóa hoặc đang đếm ngược */
+.unlock-section {
+    margin-bottom: 16px;
+}
+
+.btn-unlock-now {
+    width: 100%;
+    background: #16a34a;
+    color: white;
+    font-weight: 600;
+    margin-top: 8px;
+}
+
+.btn-unlock-now:active {
+    background: #15803d;
+}
+
 .btn-cancel-schedule {
     width: 100%;
     margin-top: 8px;

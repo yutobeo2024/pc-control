@@ -35,6 +35,7 @@
                 <div class="request-info">
                     <div class="device-name" id="requestDeviceName">Loading...</div>
                     <div class="request-time" id="requestTime">Vừa xong</div>
+                    <div class="request-queue hidden" id="requestQueue"></div>
                 </div>
                 <div class="action-buttons">
                     <button class="btn btn-reject" id="rejectBtn">
@@ -84,6 +85,13 @@
             </div>
 
             <div class="control-section">
+                <div class="unlock-section hidden">
+                    <div class="section-label">🔓 Mở khóa máy tính</div>
+                    <button class="btn btn-unlock-now" id="unlockNowBtn">
+                        Mở khóa ngay (không giới hạn thời gian)
+                    </button>
+                </div>
+
                 <div class="lock-section">
                     <div class="section-label">🔒 Khóa máy tính</div>
                     <div class="lock-buttons">

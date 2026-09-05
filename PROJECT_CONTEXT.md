@@ -338,6 +338,7 @@ Security Rules. **Nguồn duy nhất** — đừng chép rules từ file .md nà
 | 16 | **Hộp thoại "Còn 10 phút!" nằm lì giữa màn hình, không tắt được.** `QTimer.singleShot(5000, self.close)` đặt trong `WarningDialog.init_ui`, mà `main.py:show_warning` giữ lại một instance cho cả vòng đời app → chỉ lần cảnh báo ĐẦU TIÊN tự đóng, từ lần thứ hai trở đi hộp thoại frameless không nút X đứng vĩnh viễn | `QTimer` có `start()` lại, đếm từ lúc `show_warning()` chứ không phải lúc khởi tạo. Kèm: bấm vào là đóng, `Qt.Tool` + `WA_ShowWithoutActivating` để không cướp focus |
 | 17 | `set_time()` đặt cứng `warning_triggered = False`, mà `handle_unlocked_state` gọi `set_time()` mỗi lần lệch >5s với Firebase → cảnh báo bắn lại nhiều lần. Cho hẳn 10 phút thì bật "còn 10 phút" ngay giây đầu | `warning_triggered = seconds <= WARNING_TIME` — dưới ngưỡng thì coi như đã cảnh báo |
 | 18 | Không có đường nào hủy lịch khóa đang chạy. Kể cả khi web ghi `timeRemaining = null`, client gặp `if remote_time is None: return` rồi bỏ qua — `QTimer` vẫn đếm tới 0 và vẫn khóa | Client dừng hẳn đồng hồ ở nhánh đó; web thêm nút "Hủy lịch khóa" xóa cả `lockScheduled` lẫn `timeRemaining` |
+| 20 | **Không có chỗ nào mở khóa một máy cụ thể.** Trang thiết bị chỉ có nút KHÓA (`.lock-section` bị ẩn khi máy đang khóa); đường mở khóa duy nhất là thẻ "Yêu cầu mở máy", mà `renderPendingRequests` chỉ hiện MỘT yêu cầu cũ nhất — một request pending cũ của máy khác là đủ để che máy đang khóa. Gặp thật khi cài máy thứ hai | Thêm nút "Mở khóa ngay" vào trang thiết bị (`unlockDevice`), và ghi rõ "+N yêu cầu khác đang chờ" trên thẻ |
 | 19 | **Đồng hồ đếm ngược chạy ngầm không hiện.** `stop()` vừa dừng vừa `hide()`, nhưng nhánh đồng bộ chỉ gọi `set_time()` (khởi động lại QTimer, không `show()`) → sau lần khóa đầu tiên, mọi lần cấp giờ tiếp theo đều đếm ngược vô hình rồi khóa máy không báo trước | `set_time()` tự `show()` lại |
 
 ### Dọn dẹp kèm theo
@@ -587,6 +588,15 @@ d:\yuto control\
 ---
 
 ## Changelog
+
+### v1.2.4 (2026-09-05) - Nút mở khóa trên trang thiết bị
+- ✨ Nút **"Mở khóa ngay"** trong trang thiết bị, hiện khi máy đang khóa. Trước
+  đây chỉ mở khóa được qua thẻ "Yêu cầu mở máy" — mà thẻ đó chỉ hiện một yêu
+  cầu cũ nhất, nên máy thứ hai bị khóa là không có đường nào mở
+- 💬 Thẻ yêu cầu ghi rõ "+N yêu cầu khác đang chờ" thay vì im lặng bỏ qua
+
+**Files sửa:** `web-app/public/{index.html,app.js,styles.css}`
+**Cần deploy Netlify** thì nút mới có tác dụng.
 
 ### v1.2.3 (2026-09-05) - Hủy lịch khóa
 - ✨ Nút **"Hủy lịch khóa"** trên trang thiết bị, chỉ hiện khi máy đang mở và có
