@@ -5,6 +5,14 @@ Timer Widget - Đồng hồ đếm ngược hiển thị góc màn hình
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont, QPalette, QColor
+import config
+
+# Còn bao nhiêu giây thì cảnh báo. Trước đây hằng số 600 nằm rải rác trong file
+# này nên config.WARNING_TIME không có tác dụng gì.
+WARNING_TIME = getattr(config, "WARNING_TIME", 600)
+
+# Hộp thoại cảnh báo tự đóng sau bao nhiêu mili giây
+WARNING_AUTO_CLOSE_MS = 5000
 
 
 class TimerWidget(QWidget):
@@ -73,8 +81,14 @@ class TimerWidget(QWidget):
     def set_time(self, seconds):
         """Đặt thời gian còn lại (tự khởi động lại đồng hồ nếu đang dừng)"""
         self.time_remaining = seconds
-        self.warning_triggered = False
-        self.update_background_color(False)
+        # KHÔNG đặt cứng False. handle_unlocked_state gọi set_time() mỗi lần
+        # lệch quá 5 giây với Firebase; nếu reset ở đây thì mỗi lần đồng bộ lại
+        # bắn warning_shown thêm một lần và hộp thoại cảnh báo bật lại liên tục.
+        # Thời gian mới đã dưới ngưỡng nghĩa là "đang trong vùng cảnh báo", coi
+        # như đã cảnh báo rồi - kể cả khi phụ huynh cho hẳn 10 phút (600s), lúc
+        # đó bật ngay "còn 10 phút" là thừa.
+        self.warning_triggered = seconds <= WARNING_TIME
+        self.update_background_color(self.warning_triggered)
         self.update_display()
         if not self.countdown_timer.isActive():
             self.countdown_timer.start(1000)
@@ -91,7 +105,7 @@ class TimerWidget(QWidget):
             self.update_display()
 
             # Cảnh báo khi còn 10 phút
-            if self.time_remaining <= 600 and not self.warning_triggered:
+            if self.time_remaining <= WARNING_TIME and not self.warning_triggered:
                 self.warning_triggered = True
                 self.update_background_color(True)
                 self.warning_shown.emit()
@@ -112,7 +126,7 @@ class TimerWidget(QWidget):
     def add_time(self, seconds):
         """Thêm thời gian"""
         self.time_remaining += seconds
-        if self.time_remaining > 600:
+        if self.time_remaining > WARNING_TIME:
             self.update_background_color(False)
             self.warning_triggered = False
         self.update_display()
@@ -128,8 +142,12 @@ class WarningDialog(QWidget):
         """Khởi tạo giao diện cảnh báo"""
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint |
-            Qt.FramelessWindowHint
+            Qt.FramelessWindowHint |
+            Qt.Tool  # không chiếm ô trên taskbar / Alt+Tab
         )
+        # Không cướp focus khi bật lên - trẻ đang gõ hoặc chơi game thì cảnh báo
+        # nhảy vào giữa màn hình rồi nuốt mất phím bấm.
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
 
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignCenter)
@@ -162,8 +180,19 @@ class WarningDialog(QWidget):
         # Kích thước và vị trí giữa màn hình
         self.setFixedSize(400, 200)
 
-        # Tự động đóng sau 5 giây
-        QTimer.singleShot(5000, self.close)
+        # Hẹn giờ tự đóng. Phải là QTimer có thể start() lại chứ KHÔNG dùng
+        # QTimer.singleShot() đặt trong init_ui: main.py:show_warning giữ lại
+        # một instance WarningDialog dùng cho cả vòng đời app, nên singleShot
+        # chỉ chạy đúng một lần cho lần cảnh báo đầu tiên. Từ lần thứ hai trở đi
+        # hộp thoại bật lên rồi nằm lì giữa màn hình, không đóng và không tắt
+        # được (frameless, không có nút X).
+        self.auto_close_timer = QTimer(self)
+        self.auto_close_timer.setSingleShot(True)
+        self.auto_close_timer.timeout.connect(self.close)
+
+    def mousePressEvent(self, event):
+        """Bấm vào là đóng - lối thoát khi hẹn giờ tự đóng có trục trặc"""
+        self.close()
 
     def show_warning(self):
         """Hiển thị cảnh báo ở giữa màn hình"""
@@ -173,3 +202,6 @@ class WarningDialog(QWidget):
         y = (screen.height() - self.height()) // 2
         self.move(x, y)
         self.show()
+        self.raise_()
+        # Hẹn giờ đếm từ lúc HIỆN, không phải lúc khởi tạo
+        self.auto_close_timer.start(WARNING_AUTO_CLOSE_MS)

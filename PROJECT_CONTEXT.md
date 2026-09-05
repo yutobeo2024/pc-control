@@ -188,6 +188,25 @@ con cái từ xa thông qua Web App trên điện thoại.
   không chạy, mà `timeRemaining` do chính client ghi lên Firebase) — ngủ 3 tiếng
   không bị trừ phút nào. Giờ ngủ dậy là khóa nên thời gian còn lại hết ý nghĩa.
 
+### 13. Lịch khóa "Sau 30 phút / 1 giờ / ..." (sửa ở v1.2.2)
+- **Location:** `app.js:lockDevice`, `main.py:handle_unlocked_state`
+- Web ghi **hai** giá trị cùng lúc: `lockScheduled = Date.now() + N*60*1000`
+  (mốc tuyệt đối) và `timeRemaining = N*60` (khoảng thời gian). Client có hai
+  đường khóa độc lập cùng trỏ về `on_time_expired()`, cái nào tới trước thì
+  khóa, cái sau bị guard `is_locked` chặn.
+- **Bẫy:** `lockScheduled` sinh ra từ đồng hồ **điện thoại phụ huynh** nhưng
+  được so với `time.time()` của **máy con**. Hai đồng hồ lệch bao nhiêu thì lịch
+  xê dịch bấy nhiêu; máy con nhanh hơn 30 phút thì "cho chơi 30 phút" biến thành
+  khóa lại sau 2 giây. Đo được: PC +5 phút → khóa sau 25 phút; PC +30 phút →
+  khóa sau 2 giây.
+- **Cách sửa:** `lockScheduled` chỉ dùng để **biết có lịch mới**
+  (`lock_schedule_raw` đổi giá trị). Hạn thật (`lock_deadline`) tính lại bằng
+  `time.time() + timeRemaining` — toàn bộ trên đồng hồ máy con nên miễn nhiễm
+  với lệch giờ. Không có `timeRemaining` thì mới đành tin mốc tuyệt đối.
+- Dùng `time.time()` chứ không phải `time.monotonic()`, cùng lý do như mục 12.
+- Lịch bị hủy (phụ huynh approve → `lockScheduled = null`) thì xóa cả
+  `lock_schedule_raw` và `lock_deadline`, nếu không lịch cũ sống lại.
+
 ---
 
 ## Code Locations Quan Trọng
@@ -314,6 +333,10 @@ Security Rules. **Nguồn duy nhất** — đừng chép rules từ file .md nà
 | 11 | `update_status`, `update_time_remaining`, `send_unlock_request` không có `try/except`. Mất mạng đúng lúc khóa → exception trong slot Qt → PyQt gọi `qFatal` giết cả app, để lại máy **không khóa** | Bọc `try/except`, trả `None`/`False` thay vì ném |
 | 12 | Gửi yêu cầu mở khóa thất bại vì mạng → `current_request_id = None` và không có hẹn gửi lại → `handle_locked_state` đứng im, phụ huynh không thấy yêu cầu nào | Hẹn gửi lại sau `REQUEST_RETRY_DELAY` (5s) ở cả 3 nhánh gửi request |
 | 13 | Slack luôn báo "Đã hết giờ và bị khóa" kể cả khi khóa vì lý do khác | `on_time_expired(reason=...)` truyền lý do xuống `send_time_expired` |
+| 14 | `lockScheduled` (đồng hồ điện thoại phụ huynh) so thẳng với `time.time()` của máy con → lệch giờ bao nhiêu thì lịch khóa xê dịch bấy nhiêu. Máy con nhanh hơn 30 phút thì "cho chơi 30 phút" thành khóa lại sau 2 giây | Quy đổi sang hạn cục bộ: `lock_deadline = time.time() + timeRemaining`, `lockScheduled` chỉ dùng để nhận biết lịch mới |
+| 15 | `reason` thêm ở bug 13 chưa được truyền tại 2 chỗ gọi trong `handle_unlocked_state` → khóa theo lịch và khóa từ xa vẫn báo "Đã hết giờ" | Truyền `"Đã đến giờ khóa theo lịch"` / `"Phụ huynh khóa từ xa"` |
+| 16 | **Hộp thoại "Còn 10 phút!" nằm lì giữa màn hình, không tắt được.** `QTimer.singleShot(5000, self.close)` đặt trong `WarningDialog.init_ui`, mà `main.py:show_warning` giữ lại một instance cho cả vòng đời app → chỉ lần cảnh báo ĐẦU TIÊN tự đóng, từ lần thứ hai trở đi hộp thoại frameless không nút X đứng vĩnh viễn | `QTimer` có `start()` lại, đếm từ lúc `show_warning()` chứ không phải lúc khởi tạo. Kèm: bấm vào là đóng, `Qt.Tool` + `WA_ShowWithoutActivating` để không cướp focus |
+| 17 | `set_time()` đặt cứng `warning_triggered = False`, mà `handle_unlocked_state` gọi `set_time()` mỗi lần lệch >5s với Firebase → cảnh báo bắn lại nhiều lần. Cho hẳn 10 phút thì bật "còn 10 phút" ngay giây đầu | `warning_triggered = seconds <= WARNING_TIME` — dưới ngưỡng thì coi như đã cảnh báo |
 
 ### Dọn dẹp kèm theo
 - Xóa `mobile-app/` (Flutter dở dang, thiếu `android/` và `ios/` nên không build được)
@@ -562,6 +585,27 @@ d:\yuto control\
 ---
 
 ## Changelog
+
+### v1.2.2 (2026-09-05) - Lịch khóa miễn nhiễm lệch đồng hồ
+- 🐛 "Khóa sau 30 phút / 1 giờ / 1.5 giờ / 2 giờ / 3 giờ" không còn phụ thuộc
+  chênh lệch đồng hồ giữa điện thoại phụ huynh và máy con. Hạn khóa được tính
+  lại bằng `timeRemaining` trên đồng hồ máy con (`lock_deadline`)
+- 💬 Slack ghi đúng lý do ở hai nhánh còn thiếu: khóa theo lịch, khóa từ xa
+- 🐛 Hộp thoại "Còn 10 phút!" không còn nằm lì giữa màn hình từ lần cảnh báo thứ
+  hai trở đi. Thêm bấm-để-đóng và không cướp focus
+- 🐛 Cảnh báo không bắn lại mỗi lần đồng bộ thời gian với Firebase; cho hẳn 10
+  phút thì không bật cảnh báo ngay giây đầu
+- 🔧 `config.WARNING_TIME` giờ có tác dụng thật (trước bị hằng số 600 ghi đè)
+
+**Đã kiểm chứng:** mô phỏng nguyên vòng lặp client cho 30/60/90/120/180 phút
+(khóa đúng giờ, cảnh báo 10 phút đúng chỗ) + 2 lần chạy thật trên máy PT-GROUP-4
+với lịch 2 phút — mốc giờ chuẩn khóa ở t=121s, mốc giờ lệch 30 phút cũng khóa ở
+t=120s (code cũ khóa ở t=2s). `lockScheduled` được xóa sau khi lịch nổ.
+Hộp thoại cảnh báo: đặt `timeRemaining=605`, đếm cửa sổ của tiến trình qua
+`EnumWindows` — cửa sổ 400x200 hiện ở giây thứ 6, biến mất ở giây thứ 11 (đúng
+5 giây) và không bật lại trong 14 giây tiếp theo.
+
+**Files sửa:** `main.py`, `timer_widget.py`
 
 ### v1.2.1 (2026-08-24) - Khóa khi máy ngủ dậy
 - 🔒 Phát hiện máy vừa ngủ dậy (sleep/hibernate) và khóa lại — bịt đường đi vòng

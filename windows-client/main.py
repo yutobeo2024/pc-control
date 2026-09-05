@@ -90,6 +90,11 @@ class ParentalControlApp:
         # không tính khoảng thời gian máy nằm trong sleep/hibernate, dùng nó thì
         # ngủ bao lâu cũng không phát hiện được.
         self.last_check_at = time.time()
+        # Lịch khóa đang theo dõi, quy đổi sang đồng hồ của MÁY NÀY.
+        # lock_schedule_raw giữ giá trị lockScheduled thô để biết khi nào phụ
+        # huynh đặt lịch mới; lock_deadline là hạn tính bằng time.time() cục bộ.
+        self.lock_schedule_raw = None
+        self.lock_deadline = None
 
         # Khởi tạo UI components
         self.lock_screen = None
@@ -421,21 +426,41 @@ class ParentalControlApp:
         if remote_status == 'locked':
             # Khóa ngay
             print("Remote lock command received!")
-            self.on_time_expired()
+            self.on_time_expired(reason="Phụ huynh khóa từ xa")
             return
-
-        # Kiểm tra lockScheduled (khóa có delay)
-        lock_scheduled = device_data.get('lockScheduled')
-        if lock_scheduled and lock_scheduled > 0:
-            current_time_ms = int(time.time() * 1000)
-            if current_time_ms >= lock_scheduled:
-                # Đã đến giờ khóa
-                print("Scheduled lock time reached! Locking...")
-                self.on_time_expired()
-                return
 
         # Cập nhật thời gian từ Firebase (nếu có timer)
         remote_time = device_data.get('timeRemaining')
+
+        # ---- Lịch khóa có delay ("Khóa sau 30 phút / 1 giờ / ...") ----
+        # Web ghi cùng lúc hai giá trị: lockScheduled = Date.now() + N phút
+        # (mốc tuyệt đối, tính bằng đồng hồ ĐIỆN THOẠI phụ huynh) và
+        # timeRemaining = N*60 (khoảng thời gian, không phụ thuộc đồng hồ nào).
+        #
+        # So thẳng lockScheduled với time.time() của máy con là sai: hai đồng hồ
+        # lệch nhau bao nhiêu thì lịch xê dịch bấy nhiêu. Máy con chạy nhanh hơn
+        # điện thoại 30 phút thì "cho chơi 30 phút" biến thành khóa lại sau 2
+        # giây. Nên chỉ dùng lockScheduled để BIẾT CÓ LỊCH MỚI, còn hạn thì tính
+        # lại bằng khoảng thời gian trên chính đồng hồ máy này.
+        lock_scheduled = device_data.get('lockScheduled')
+        if lock_scheduled and lock_scheduled > 0:
+            if lock_scheduled != self.lock_schedule_raw:
+                if remote_time is not None:
+                    remaining = remote_time
+                else:
+                    # Không có timeRemaining thì đành tin mốc tuyệt đối
+                    remaining = (lock_scheduled - time.time() * 1000) / 1000.0
+                self.lock_schedule_raw = lock_scheduled
+                self.lock_deadline = time.time() + max(0, remaining)
+                print(f"Lich khoa moi: sau {format_duration(max(0, remaining))}")
+
+            if time.time() >= self.lock_deadline:
+                self.on_time_expired(reason="Đã đến giờ khóa theo lịch")
+                return
+        else:
+            # Lịch bị hủy (phụ huynh approve) hoặc đã tiêu thụ xong
+            self.lock_schedule_raw = None
+            self.lock_deadline = None
 
         # timeRemaining = None nghĩa là mở khóa không giới hạn thời gian
         if remote_time is None:
